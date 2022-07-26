@@ -23,7 +23,7 @@ static long calculate_time()
 
 transaction* new_transaction(int sender, int reciever, int quantita, int reward)
 {
-  transaction* t = malloc(sizeof(transaction));
+  transaction* t = (transaction*)malloc(sizeof(transaction));
   t->timestamp = calculate_time();
   t->sender = sender;
   t->receiver = reciever;
