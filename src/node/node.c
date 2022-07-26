@@ -4,22 +4,20 @@
 #include "utils.h"
 #include "transaction.h"
 
-static int SO_BLOCK_SIZE = 0;
 static int SO_TP_SIZE = 0;
 
 static transaction** transaction_pool = NULL;
 static int nof_transaction = 0;
 
-static void handler_term(int sigTerm) {
+static void handler_term(int sig_term) {
   free_pool_block(transaction_pool, 0, SO_TP_SIZE);
-
+  free(transaction_pool);
   signal(SIGTERM, SIG_DFL);
 }
 
 static void init_node()
 {
   SO_TP_SIZE = retrieve_constant("SO_TP_SIZE");
-  SO_BLOCK_SIZE = retrieve_constant("SO_BLOCK_SIZE");
 
   if (SO_BLOCK_SIZE >= SO_TP_SIZE) {
     fprintf(LOG_FILE, "init_node: SO_BLOCK_SIZE >= SO_TP_SIZE. Check environmental config.\n");
@@ -70,12 +68,6 @@ static transaction** extract_block()
   block[SO_BLOCK_SIZE] = node_transaction;
   return block;
 }
-/*
-    CODICE PER SLEEP DEL NODO (FORSE)
-    long maxT = retrieve_constant("SO_MAX_TRANS_PROC_NSEC");
-    long minT = retrieve_constant("SO_MIN_TRANS_PROC_NSEC");
-    sleep(rand() % (max - min + 1) + min);
-*/
 
 static void simulate_processing() {
   long max_t = retrieve_constant("SO_MAX_TRANS_PROC_NSEC");

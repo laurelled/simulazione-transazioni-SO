@@ -2,6 +2,7 @@
 #define _TRANSACTION_H_
 
 #define SELF_RECIEVER -1
+#define SO_BLOCK_SIZE 10
 
 typedef struct
 {
