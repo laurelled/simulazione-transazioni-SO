@@ -1,0 +1,13 @@
+#EXECUTABLES
+*.exe
+*.out
+**/**/bin
+
+#OBJECTS
+*.o
+**/**/build
+
+#MISC
+.vscode
+*.txt
+*.pdf
