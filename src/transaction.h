@@ -1,6 +1,8 @@
 #ifndef _TRANSACTION_H_
 #define _TRANSACTION_H_
 
+#define SELF_RECIEVER -1
+
 typedef struct
 {
   long timestamp;
@@ -10,6 +12,6 @@ typedef struct
   int reward;
 } transaction;
 
-transaction *new_transaction(int sender, int reciever, int quantita, int reward);
+transaction* new_transaction(int sender, int reciever, int quantita, int reward);
 
 #endif
