@@ -2,22 +2,23 @@
 #include <string.h>
 #include <stdio.h>
 
-extern char **environ;
+extern char** environ;
 
-int retrieve_constant(const char *name)
+int retrieve_constant(const char* name)
 {
-  const char *delim = "=";
+  const char* delim = "=";
   int val = 0;
-  char *stringa = *environ;
+  char* stringa = *environ;
   while (stringa != NULL && strstr(stringa, name) == NULL)
   {
     stringa = *environ++;
   }
   if (stringa != NULL)
   {
-    char *token = strtok(stringa, delim);
+    char* token = strtok(stringa, delim);
     token = strtok(NULL, delim);
-    val = atoi(token);
+    if (token != NULL)
+      val = atoi(token);
   }
   return val;
 }
