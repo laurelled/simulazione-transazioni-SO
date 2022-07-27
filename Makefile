@@ -1,15 +1,27 @@
 CC = gcc
 
-all: bin/sort bin/tests
+all: node ledger utils transaction
 
-CFLAGS = -g3 -Wall -Wextra -Wpedantic -Wconversion -std=c89 -pedantic
+CFLAGS = -g -Wall -Wextra -Wpedantic -Wconversion -std=c89 -pedantic
 
-INCLUDES = src/*.h
+INCLUDES = src/**/*.h
 
 COMMON_DEPS = $(INCLUDES) Makefile
 
-build/%.o: src/%.c $(COMMON_DEPS)
-	$(CC) $(CFLAGS) -c $< -o $@
+node: src/node/node.c utils ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $<
+
+ledger: src/ledger/ledger.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $<
+
+user: src/user/user.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $<
+
+transaction: src/transaction.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $<
+
+utils: src/utils/utils.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $<
 
 clean:
 	rm -f build/* bin/*
