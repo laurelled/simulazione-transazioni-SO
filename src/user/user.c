@@ -4,22 +4,16 @@
 #include "../utils/utils.h"
 
 //Variabili statici per ogni processo utente
-static int SO_BUDGET_INIT;
-static int SO_USERS_NUM;
-static int SO_NODES_NUM;
-static int SO_REWARD;
-static int SO_MIN_TRANS_GEN_NSEC;
-static int SO_MAX_TRANS_GEN_NSEC;
+extern int SO_BUDGET_INIT;
+extern int SO_USERS_NUM;
+extern int SO_NODES_NUM;
+extern int SO_REWARD;
+extern int SO_MIN_TRANS_GEN_NSEC;
+extern int SO_MAX_TRANS_GEN_NSEC;
 
 transaction generate_transaction(int* utenti_da_cui_scegliere, int max_importo, int* nodi_da_cui_scegliere)
 {
   int bilancio_corrente = 0;
-  SO_BUDGET_INIT = retrieve_constant("SO_BUDGET_INIT");
-  SO_USERS_NUM = retrieve_constant("SO_USERS_NUM");
-  SO_NODES_NUM = retrieve_constant("SO_NODES_NUM");
-  SO_REWARD = retrieve_constant("SO_REWARD");
-  SO_MIN_TRANS_GEN_NSEC = retrieve_constant("SO_MIN_TRANS_GEN_NSEC");
-  SO_MAX_TRANS_GEN_NSEC = retrieve_constant("SO_MAX_TRANS_GEN_NSEC");
 
 
   while ((bilancio_corrente = calcola_bilancio()) >= 2)

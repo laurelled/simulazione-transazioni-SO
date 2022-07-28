@@ -23,9 +23,9 @@ static struct sigaction ACT_SIGUSR1_DFL;
 static struct sigaction ACT_SIGTERM_DFL;
 
 static int queue_id;
-static int SO_TP_SIZE = 0;
-static int SO_MAX_TRANS_PROC_NSEC = 0;
-static int SO_MIN_TRANS_PROC_NSEC = 0;
+extern int SO_TP_SIZE;
+extern int SO_MAX_TRANS_PROC_NSEC;
+extern int SO_MIN_TRANS_PROC_NSEC;
 
 static list friends;
 static transaction* transaction_pool;
@@ -80,11 +80,6 @@ static void init_node()
   sigset_t mask;
   struct sigaction act;
   struct msqid_ds stats;
-
-  /* constant retrieval from environ */
-  SO_TP_SIZE = retrieve_constant("SO_TP_SIZE");
-  SO_MAX_TRANS_PROC_NSEC = retrieve_constant("SO_MAX_TRANS_PROC_NSEC");
-  SO_MIN_TRANS_PROC_NSEC = retrieve_constant("SO_MIN_TRANS_PROC_NSEC");
 
   /* transaction pool init */
   transaction_pool = (transaction*)calloc(SO_TP_SIZE, sizeof(transaction));
@@ -198,7 +193,7 @@ void generate_node()
     free(block);
   }
 }
-
+/*
 void handler(int sig) {
   fprintf(LOG_FILE, "SIGINT recieved\n");
   cleanup();
@@ -229,4 +224,4 @@ int main() {
   }
   generate_node();
   return 0;
-}
+}*/

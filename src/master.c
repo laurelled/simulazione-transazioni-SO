@@ -3,14 +3,15 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "utils.h"
+#include "utils/utils.h"
+#include "load_constants/load_constants.h"
 
 #define MAX_USERS_TO_PRINT 10
 #define SO_REGISTRY_SIZE 10
 
-static int SO_USERS_NUM = 0;
-static int SO_NODES_NUM = 0;
-static int SO_SIM_SEC = 0;
+extern int SO_USERS_NUM;
+extern int SO_NODES_NUM;
+extern int SO_SIM_SEC;
 
 static int active_users = 0;
 static int active_nodes = 0;
@@ -29,10 +30,6 @@ void periodical_print() {
 }
 
 void init_master() {
-  SO_USERS_NUM = retrieve_constant("SO_USERS_NUM");
-  SO_NODES_NUM = retrieve_constant("SO_NODES_NUM");
-  SO_SIM_SEC = retrieve_constant("SO_SIM_SEC");
-
   active_users = SO_USERS_NUM;
   active_nodes = SO_NODES_NUM;
 
