@@ -23,15 +23,13 @@ static struct sigaction ACT_SIGUSR1_DFL;
 static struct sigaction ACT_SIGTERM_DFL;
 
 static int queue_id;
-static int SO_TP_SIZE;
-static int SO_MAX_TRANS_PROC_NSEC;
-static int SO_MIN_TRANS_PROC_NSEC;
+static int SO_TP_SIZE = 0;
+static int SO_MAX_TRANS_PROC_NSEC = 0;
+static int SO_MIN_TRANS_PROC_NSEC = 0;
 
 static list friends;
 static transaction* transaction_pool;
 static int nof_transaction;
-
-static int ric = 0;
 
 void cleanup() {
   free(transaction_pool);
@@ -41,17 +39,12 @@ void cleanup() {
 static void sig_handler(int sig) {
   struct msqid_ds stats;
   switch (sig) {
-  case SIGALRM:
-    ric++;
-    fprintf(LOG_FILE, "ricevuto SIGALRM\n");
-    break;
   case SIGTERM:
     cleanup();
     exit(EXIT_SUCCESS);
   case SIGUSR1:
   {
-    fprintf(LOG_FILE, "ricevuto SIGUSR1\n");
-    msgqnum_t msg_num;
+    int msg_num;
     if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
       fprintf(ERR_FILE, "sig_handler: reading error of IPC_STAT. Check user permission.\n");
       cleanup();
@@ -89,9 +82,18 @@ static void init_node()
   struct msqid_ds stats;
 
   /* constant retrieval from environ */
-  SO_TP_SIZE = retrieve_constant("SO_TP_SIZE");
-  SO_MAX_TRANS_PROC_NSEC = retrieve_constant("SO_MAX_TRANS_PROC_NSEC");
-  SO_MIN_TRANS_PROC_NSEC = retrieve_constant("SO_MIN_TRANS_PROC_NSEC");
+  if ((SO_TP_SIZE = retrieve_constant("SO_TP_SIZE")) < 0) {
+    fprintf(ERR_FILE, "SO_TP_SIZE could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n");
+    exit(EXIT_FAILURE);
+  }
+  if ((SO_MAX_TRANS_PROC_NSEC = retrieve_constant("SO_MAX_TRANS_PROC_NSEC")) < 0) {
+    fprintf(ERR_FILE, "SO_MAX_TRANS_PROC_NSEC could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n");
+    exit(EXIT_FAILURE);
+  };
+  if ((SO_MIN_TRANS_PROC_NSEC = retrieve_constant("SO_MIN_TRANS_PROC_NSEC")) < 0) {
+    fprintf(ERR_FILE, "SO_MIN_TRANS_PROC_NSEC could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n");
+    exit(EXIT_FAILURE);
+  };
 
   /* transaction pool init */
   transaction_pool = (transaction*)calloc(SO_TP_SIZE, sizeof(transaction));
@@ -201,7 +203,6 @@ void generate_node()
   {
     transaction* block = NULL;
     if (nof_transaction < SO_BLOCK_SIZE) {
-      fprintf(LOG_FILE, "ricevuti %d segnali\n", ric);
       pause();
       continue;
     }
@@ -235,8 +236,8 @@ int main() {
       msg.transaction = t;
       if (msgsnd(q, &msg, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) < 0)
         fprintf(LOG_FILE, "PID: %d - la coda ha rifiutato il msg\n", getpid());
-      fprintf(LOG_FILE, "PID: %d - sending SIGALRM to parent\n", getpid());
-      kill(getppid(), SIGALRM);
+      fprintf(LOG_FILE, "PID: %d - sending SIGUSR1 to parent\n", getpid());
+      kill(getppid(), SIGUSR1);
       exit(EXIT_SUCCESS);
     }
   }

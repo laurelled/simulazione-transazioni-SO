@@ -2,24 +2,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdio.h>
 
 extern char** environ;
 
 int retrieve_constant(const char* name)
 {
   const char* delim = "=";
-  int val = 0;
-  char* stringa = *environ;
-  while (stringa != NULL && strstr(stringa, name) == NULL)
-  {
-    stringa = *environ++;
+  int val = -1;
+  char** ptr = environ;
+  char* stringa = *ptr;
+  while (stringa != NULL && strstr(stringa, name) == NULL) {
+    stringa = *ptr++;
   }
   if (stringa != NULL)
   {
     char* token = strtok(stringa, delim);
     token = strtok(NULL, delim);
-    if (token != NULL)
-      val = atoi(token);
+    val = token != NULL ? atoi(token) : 0;
   }
   return val;
 }
