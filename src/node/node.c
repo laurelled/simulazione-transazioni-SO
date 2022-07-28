@@ -57,7 +57,7 @@ static void sig_handler(int sig) {
         struct msg incoming;
         transaction t;
 
-        msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT);
+        msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
         t = incoming.transaction;
         if (nof_transaction == SO_TP_SIZE) {
           kill(t.sender, REFUSE_TRANSACTION);
@@ -225,7 +225,7 @@ int main() {
       new_transaction(&t, getpid(), 0, 100, 20);
       msg.hops = 0;
       msg.transaction = t;
-      if (msgsnd(q, &msg, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) < 0)
+      if (msgsnd(q, &msg, sizeof(struct msg) - sizeof(unsigned int), IPC_NOWAIT) < 0)
         fprintf(LOG_FILE, "PID: %d - la coda ha rifiutato il msg\n", getpid());
       fprintf(LOG_FILE, "PID: %d - sending SIGUSR1 to parent\n", getpid());
       kill(getppid(), SIGUSR1);
