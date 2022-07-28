@@ -82,18 +82,9 @@ static void init_node()
   struct msqid_ds stats;
 
   /* constant retrieval from environ */
-  if ((SO_TP_SIZE = retrieve_constant("SO_TP_SIZE")) < 0) {
-    fprintf(ERR_FILE, "SO_TP_SIZE could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n");
-    exit(EXIT_FAILURE);
-  }
-  if ((SO_MAX_TRANS_PROC_NSEC = retrieve_constant("SO_MAX_TRANS_PROC_NSEC")) < 0) {
-    fprintf(ERR_FILE, "SO_MAX_TRANS_PROC_NSEC could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n");
-    exit(EXIT_FAILURE);
-  };
-  if ((SO_MIN_TRANS_PROC_NSEC = retrieve_constant("SO_MIN_TRANS_PROC_NSEC")) < 0) {
-    fprintf(ERR_FILE, "SO_MIN_TRANS_PROC_NSEC could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n");
-    exit(EXIT_FAILURE);
-  };
+  SO_TP_SIZE = retrieve_constant("SO_TP_SIZE");
+  SO_MAX_TRANS_PROC_NSEC = retrieve_constant("SO_MAX_TRANS_PROC_NSEC");
+  SO_MIN_TRANS_PROC_NSEC = retrieve_constant("SO_MIN_TRANS_PROC_NSEC");
 
   /* transaction pool init */
   transaction_pool = (transaction*)calloc(SO_TP_SIZE, sizeof(transaction));
