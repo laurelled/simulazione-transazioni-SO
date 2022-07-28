@@ -1,4 +1,6 @@
+#define _GNU_SOURCE
 #include "transaction.h"
+#include "utils/utils.h"
 #include <time.h>
 #include <stdlib.h>
 
@@ -21,14 +23,15 @@ static long calculate_time()
   return time.tv_nsec;
 }
 
-transaction* new_transaction(int sender, int reciever, int quantita, int reward)
+void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward)
 {
-  transaction* t = (transaction*)malloc(sizeof(transaction));
-  t->timestamp = calculate_time();
-  t->sender = sender;
-  t->receiver = reciever;
-  t->quantita = quantita;
-  t->reward = reward;
+  new->timestamp = calculate_time();
+  new->sender = sender;
+  new->receiver = reciever;
+  new->quantita = quantita;
+  new->reward = reward;
+}
 
-  return t;
+void print_transaction(transaction t) {
+  fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
 }

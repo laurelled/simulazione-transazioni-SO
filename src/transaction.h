@@ -13,6 +13,7 @@ typedef struct
   int reward;
 } transaction;
 
-transaction* new_transaction(int sender, int reciever, int quantita, int reward);
+void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);
+void print_transaction(transaction t);
 
 #endif
