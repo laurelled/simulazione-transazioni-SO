@@ -115,11 +115,6 @@ static void init_node()
     cleanup();
     exit(EXIT_FAILURE);
   }
-  if (sigaction(SIGALRM, &act, NULL) < 0) {
-    fprintf(ERR_FILE, "init_node: could not associate handler to SIGALRM.\n");
-    cleanup();
-    exit(EXIT_FAILURE);
-  }
 
   /* system V message queue */
   if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IWUSR | S_IRUSR)) < -1) {
