@@ -112,7 +112,7 @@ static void init_node()
   }
 
   /* system V message queue */
-  if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IWUSR | S_IRUSR)) < -1) {
+  if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IWUSR | S_IRUSR)) <0) {
     fprintf(ERR_FILE, "init_node: message queue already exists. Check ipcs and remove it with iprm -Q %d.\n", getpid());
     cleanup();
     exit(EXIT_FAILURE);
