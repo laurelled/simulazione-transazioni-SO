@@ -8,7 +8,7 @@ INCLUDES = src/**/*.h
 
 COMMON_DEPS = $(INCLUDES) Makefile
 
-node: src/node/node.c utils ${COMMON_DEPS}
+node: src/node/node.c utils transaction ${COMMON_DEPS}
 	${CC} ${CFLAGS} -c $<
 
 ledger: src/ledger/ledger.c ${COMMON_DEPS}
