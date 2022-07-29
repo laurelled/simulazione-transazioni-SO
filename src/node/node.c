@@ -11,7 +11,7 @@
 #include <strings.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <errno.h>
+/*#include <errno.h>*/
 
 #define REFUSE_TRANSACTION SIGUSR1
 
