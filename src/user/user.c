@@ -31,7 +31,7 @@ struct msg {
 };
 void handler(int);
 int calcola_bilancio();
-void init_user(int* utenti_da_cui_scegliere, int* nodi_da_cui_scegliere)
+void init_user(int* users, int* nodes)
 {
   int bilancio_corrente = 0;
   struct sigaction sa;
@@ -50,9 +50,10 @@ void init_user(int* utenti_da_cui_scegliere, int* nodi_da_cui_scegliere)
     int num;
     int reward_t;
     struct msg transaction;
+    cont_try = 0;
     /* estrazione di un destinatario casuale*/
 
-    while (getpid() == utenti_da_cui_scegliere[random_user] || (kill(utenti_da_cui_scegliere[random_user], 0) == -1 && errno == ESRCH))
+    while (getpid() == users[random_user] || (kill(users[random_user], 0) == -1 && errno == ESRCH))
 
     { /* evita di estrarre lo stesso processo in cui ci troviamo o di trovare un utente terminato*/
       random_user = (rand() % (SO_USERS_NUM + 1));
@@ -69,19 +70,19 @@ void init_user(int* utenti_da_cui_scegliere, int* nodi_da_cui_scegliere)
 
     /* system V message queue */
     /* ricerca della coda di messaggi del nodo random */
-    if ((ipc_id = msgget(nodi_da_cui_scegliere[random_node], 0)) == -1) {
-      fprintf(ERR_FILE, "user %d: message queue of node %d not found\n", getpid(), nodi_da_cui_scegliere[random_node]);
+    if ((ipc_id = msgget(nodes[random_node], 0)) == -1) {
+      fprintf(ERR_FILE, "user %d: message queue of node %d not found\n", getpid(), nodes[random_node]);
       exit(EXIT_FAILURE);
     }
     /* creazione di una transazione e invio di tale al nodo generato*/
     t = malloc(sizeof(transaction));
-    new_transaction(t, getpid(), utenti_da_cui_scegliere[random_user], cifra_utente, reward_t);
+    new_transaction(t, getpid(), users[random_user], cifra_utente, reward_t);
 
 
     transaction.hops = 0;
     transaction.transaction = *t;
     msgsnd(ipc_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT);
-    kill(nodi_da_cui_scegliere[random_node], SIGUSR1);
+    kill(nodes[random_node], SIGUSR1);
     /*tempo di attesa dopo l'invio di una transazione*/
 
     sigaddset(&mask, SIGUSR1);
