@@ -13,6 +13,13 @@ typedef struct
   int reward;
 } transaction;
 
+struct master_book {
+  unsigned int cursor;
+  transaction** blocks;
+};
+
+
+struct master_book* get_master_book(int shm_id);
 void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);
 void print_transaction(transaction t);
 

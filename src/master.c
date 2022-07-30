@@ -1,7 +1,7 @@
 #include "utils/utils.h"
 #include "load_constants/load_constants.h"
 #include "pid_list/pid_list.h"
-#include "transaction.h"
+#include "master_book/master_book.h"
 #include "node/node.h"
 #include "user/user.h"
 
@@ -33,11 +33,6 @@
 
 #define SHM_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
 
-struct master_book {
-  unsigned int cursor;
-  transaction** blocks;
-};
-
 struct master_book* book;
 
 extern int SO_USERS_NUM;
@@ -49,7 +44,6 @@ static int inactive_nodes;
 static int simulation_seconds;
 static int stop_sim = 0;
 
-static int shm_id;
 
 void handler(int signal) {
   switch (signal) {
@@ -60,7 +54,7 @@ void handler(int signal) {
     simulation_seconds++;
     alarm(1);
     break;
-  case SIGTERM:
+  case SIGINT:
     stop_sim = 1;
     fprintf(LOG_FILE, "master: recieved a SIGTERM at %ds from simulation start\n", simulation_seconds);
     break;
@@ -78,31 +72,24 @@ void stop_simulation(pid_t* users, pid_t* nodes) {
   }
 }
 
-void cleanup(pid_t* users, pid_t* nodes) {
-  if (users != NULL || nodes != NULL)
-    stop_simulation(users, nodes);
+void cleanup(pid_t* users, pid_t* nodes, int shm_id, int sem_id) {
+  stop_simulation(users, nodes);
+
+  free_list(users);
+  free_list(nodes);
 
   if (shmctl(shm_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "%s cleanup: cannot remove shm with id %d\n", __FILE__, shm_id);
+    fprintf(ERR_FILE, "%s cleanup: cannot remove shm with id %d\n. Please check ipcs and remove it.\n", __FILE__, shm_id);
+  }
+
+  if (semctl(sem_id, 0, IPC_RMID) == -1) {
+    fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
+    exit(EXIT_FAILURE);
   }
 }
 
 int  start_shared_memory() {
   return shmget(getpid(), SHM_SIZE, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
-}
-
-struct master_book* get_master_book(int shm_id) {
-  struct master_book* new = NULL;
-  transaction** ptr;
-  if ((ptr = shmat(shm_id, NULL, 0)) == (void*)-1) {
-    fprintf(ERR_FILE, "master: the process can't be attached\n");
-    return NULL;
-  }
-  new = malloc(sizeof(struct master_book));
-  new->cursor = 0;
-  new->blocks = ptr;
-
-  return new;
 }
 
 void periodical_print() {
@@ -139,7 +126,10 @@ int main() {
 
   int i = 0;
   struct sembuf sops;
+  int shm_id;
   int sem_id;
+
+  fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
 
   bzero(&mask, sizeof(sigset_t));
   sigemptyset(&mask);
@@ -151,7 +141,7 @@ int main() {
     fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
     exit(EXIT_FAILURE);
   }
-  if (sigaction(SIGTERM, &act, NULL) < 0) {
+  if (sigaction(SIGINT, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGTERM.\n");
     exit(EXIT_FAILURE);
   }
@@ -162,7 +152,7 @@ int main() {
   }
   if ((book = get_master_book(shm_id)) == NULL) {
     fprintf(ERR_FILE, "master: the process cannot be attached to the shared memory.\n");
-    cleanup(NULL, NULL);
+    cleanup(users, nodes, shm_id, sem_id);
     exit(EXIT_FAILURE);
   }
 
@@ -171,17 +161,13 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-
-
-  init_master();
-
   while (i < SO_USERS_NUM) {
     pid_t child;
 
     switch ((child = fork())) {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for user creation.\n");
-      cleanup(users, nodes);
+      cleanup(users, nodes, shm_id, sem_id);
       exit(EXIT_FAILURE);
     case 0:
     {
@@ -208,7 +194,7 @@ int main() {
     switch ((child = fork())) {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for node creation.\n");
-      cleanup(users, nodes);
+      cleanup(users, nodes, shm_id, sem_id);
       exit(EXIT_FAILURE);
     case 0:
       generate_node();
@@ -220,7 +206,7 @@ int main() {
   }
 
   if (shmctl(shm_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing a shm\n");
+    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_id);
     exit(EXIT_FAILURE);
   }
 
@@ -236,8 +222,10 @@ int main() {
   semop(sem_id, &sops, 1);
 
   {
+    int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM);
+    int reason;
+
     i = 0;
-    int* nof_transactions[SO_NODES_NUM];
     while (!stop_sim && simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && book->cursor < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
@@ -246,6 +234,7 @@ int main() {
         if (errno == EINTR) {
           continue;
         }
+        cleanup(users, nodes, shm_id, sem_id);
         exit(EXIT_FAILURE);
       }
       if ((node_index = find_element(nodes, SO_NODES_NUM, terminated_p)) != -1) {
@@ -257,7 +246,7 @@ int main() {
           }
           else {
             fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
-            cleanup(users, nodes);
+            cleanup(users, nodes, shm_id, sem_id);
             exit(EXIT_FAILURE);
           }
         }
@@ -279,6 +268,7 @@ int main() {
         else if (errno == ECHILD) {
           break;
         }
+        cleanup(users, nodes, shm_id, sem_id);
         exit(EXIT_FAILURE);
       }
       if ((index = find_element(nodes, SO_NODES_NUM, terminated_p)) != -1) {
@@ -296,7 +286,7 @@ int main() {
       }
     }
 
-    int reason = SIM_END_SEC;
+    reason = SIM_END_SEC;
     if (SO_USERS_NUM == 0) {
       reason = SIM_END_USR;
     }
@@ -304,10 +294,16 @@ int main() {
       reason = SIM_END_SIZ;
     }
     summary_print(reason, nof_transactions, nodes);
+    free(nof_transactions);
   }
-
 
   free_list(users);
   free_list(nodes);
+
+  if (semctl(sem_id, 0, IPC_RMID) == -1) {
+    fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
+    exit(EXIT_FAILURE);
+  }
+  fprintf(LOG_FILE, "Completed simulation. Exiting...\n");
   exit(EXIT_SUCCESS);
 }
