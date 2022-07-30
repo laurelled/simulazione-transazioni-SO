@@ -1,5 +1,6 @@
 #include "utils/utils.h"
 #include "load_constants/load_constants.h"
+#include "pid_list/pid_list.h"
 #include "transaction.h"
 #include "node/node.h"
 #include "user/user.h"
@@ -8,10 +9,12 @@
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
+#include <sys/wait.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/msg.h>
 #include <signal.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -37,29 +40,24 @@ extern int SO_USERS_NUM;
 extern int SO_NODES_NUM;
 extern int SO_SIM_SEC;
 
-static int* users;
-static int* nodes;
-
 static int inactive_users;
 
 static int shm_id;
 
-void stop_simulation() {
+void stop_simulation(pid_t* users, pid_t* nodes) {
   int i = 0;
-  while (i < SO_USERS_NUM) {
+  while (users[i] != 0 && i < SO_USERS_NUM) {
     kill(users[i++], SIGTERM);
   }
   i = 0;
-  while (i < SO_NODES_NUM) {
+  while (nodes[i] != 0 && i < SO_NODES_NUM) {
     kill(nodes[i++], SIGTERM);
   }
-
-  free(users);
-  free(nodes);
 }
 
-void cleanup() {
-  stop_simulation();
+void cleanup(pid_t* users, pid_t* nodes) {
+  if (users != NULL || nodes != NULL)
+    stop_simulation(users, nodes);
 
   if (shmctl(shm_id, 0, IPC_RMID) == -1) {
     fprintf(ERR_FILE, "%s cleanup: cannot remove shm with id %d\n", __FILE__, shm_id);
@@ -67,24 +65,17 @@ void cleanup() {
 }
 
 int  start_shared_memory() {
-  int shid;
-  if (shid = shmget(getpid(), SHM_SIZE, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR) == -1) {
-    fprintf(ERR_FILE, "master:error on shm creation\n");
-    exit(EXIT_FAILURE);
-  }
-
-  return shid;
-
+  return shmget(getpid(), SHM_SIZE, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 }
 
 struct master_book* get_master_book(int shm_id) {
-  struct master_book* new = malloc(sizeof(struct master_book));
+  struct master_book* new = NULL;
   transaction** ptr;
-  if ((ptr = shmat(shm_id, NULL, 0)) == -1) {
+  if ((ptr = shmat(shm_id, NULL, 0)) == (void*)-1) {
     fprintf(ERR_FILE, "master: the process can't be attached\n");
-    cleanup();
-    exit(EXIT_FAILURE);
+    return NULL;
   }
+  new = malloc(sizeof(struct master_book));
   new->cursor = 0;
   new->blocks = ptr;
 
@@ -101,27 +92,33 @@ void periodical_print() {
   }
 }
 
-void init_master() {
-  users = (int*)calloc(SO_USERS_NUM, sizeof(pid_t));
-  nodes = (int*)calloc(SO_NODES_NUM, sizeof(pid_t));
-}
-
 void summary_print() {
-  //TODO: bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente
-  // TODO: bilancio di ogni processo nodo
+  /* TODO: bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
+  /* TODO: bilancio di ogni processo nodo */
   fprintf(LOG_FILE, "NUMBER OF INACTIVE USERS: %d\n", inactive_users);
   fprintf(LOG_FILE, "NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n", book->cursor);
-  //TODO: per ogni processo nodo, numero di transazioni ancora presenti nella transaction pool. Forse farlo ritornare come status?
+  /* TODO: per ogni processo nodo, numero di transazioni ancora presenti nella transaction pool. Forse farlo ritornare come status? */
 
 
 }
 
 int main() {
+  pid_t* users = init_list(SO_USERS_NUM);
+  pid_t* nodes = init_list(SO_NODES_NUM);
+
   int i = 0;
   struct sembuf sops;
   int sem_id;
-  shm_id = start_shared_memory();
-  book = get_master_book(shm_id);
+
+  if ((shm_id = start_shared_memory()) == -1) {
+    fprintf(ERR_FILE, "master: cannot start shared memory. Please clear the shm with id %d\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+  if ((book = get_master_book(shm_id)) == NULL) {
+    fprintf(ERR_FILE, "master: the process cannot be attached to the shared memory.\n");
+    cleanup(NULL, NULL);
+    exit(EXIT_FAILURE);
+  }
 
   if ((sem_id = semget(getpid(), NUM_SEM, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
     fprintf(ERR_FILE, "master: semaphore %d already exists.\n", getpid());
@@ -138,7 +135,7 @@ int main() {
     switch ((child = fork())) {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for user creation.\n");
-      cleanup();
+      cleanup(users, nodes);
       exit(EXIT_FAILURE);
     case 0:
     {
@@ -165,7 +162,7 @@ int main() {
     switch ((child = fork())) {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for node creation.\n");
-      cleanup();
+      cleanup(users, nodes);
       exit(EXIT_FAILURE);
     case 0:
       generate_node();
@@ -195,31 +192,35 @@ int main() {
   i = 0;
   while (i < SO_SIM_SEC && inactive_users < SO_USERS_NUM && book->cursor < SO_REGISTRY_SIZE) {
     int status = 0;
-    int ret_val = wait(&status);
-    if (ret_val == -1) {
+    int terminated_p = wait(&status);
+    if (terminated_p == -1) {
       if (errno == EINTR) {
         continue;
       }
       fprintf(ERR_FILE, "master, che cazzo ci fai qui\n");
       exit(EXIT_FAILURE);
     }
-    if (WIFEXITED(status)) {
-      switch (WEXITSTATUS(status)) {
-      case EXIT_SUCCESS:
-        break;
-      case EXIT_FAILURE:
-        break;
-      case EARLY_FAILURE:
-        break;
-      default:
-        break;
+    if (list_contains(nodes, SO_NODES_NUM, terminated_p)) {
+      if (WIFEXITED(status)) {
+        switch (WEXITSTATUS(status)) {
+        case EXIT_SUCCESS:
+          break;
+        case EXIT_FAILURE:
+          break;
+        case EARLY_FAILURE:
+          break;
+        default:
+          break;
+        }
       }
+    }
+    else {
       inactive_users++;
     }
 
   }
 
-  stop_simulation();
+  stop_simulation(users, nodes);
   fprintf(LOG_FILE, "End simulation reason: ");
   if (i == SO_SIM_SEC) {
     fprintf(LOG_FILE, "SIMULATION TIME RUN OFF\n");
@@ -231,6 +232,7 @@ int main() {
     fprintf(LOG_FILE, "MASTER BOOK CAPACITY REACHED MAXIMUM CAPACITY\n");
   }
   summary_print();
-
+  free_list(users);
+  free_list(nodes);
   exit(EXIT_SUCCESS);
 }
