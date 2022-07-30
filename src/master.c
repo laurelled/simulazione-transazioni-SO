@@ -19,6 +19,10 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#define SIM_END_SEC 0
+#define SIM_END_USR 1
+#define SIM_END_SIZ 2
+
 #define EARLY_FAILURE 69
 
 #define MAX_USERS_TO_PRINT 10
@@ -29,7 +33,7 @@
 
 #define SHM_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
 
-struct master_book {/*da cambiare nome*/
+struct master_book {
   unsigned int cursor;
   transaction** blocks;
 };
@@ -41,8 +45,27 @@ extern int SO_NODES_NUM;
 extern int SO_SIM_SEC;
 
 static int inactive_users;
+static int inactive_nodes;
+static int simulation_seconds;
+static int stop_sim = 0;
 
 static int shm_id;
+
+void handler(int signal) {
+  switch (signal) {
+  case SIGALRM:
+    fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d", SO_USERS_NUM - inactive_users, SO_NODES_NUM - inactive_nodes);
+    /* il budget corrente di ogni processo utente e di ogni processo nodo, cosı̀ come registrato nel libro mastro
+    (inclusi i processi utente terminati). Oppure quelli con maggior e minor budget. */
+    simulation_seconds++;
+    alarm(1);
+    break;
+  case SIGTERM:
+    stop_sim = 1;
+    fprintf(LOG_FILE, "master: recieved a SIGTERM at %ds from simulation start\n", simulation_seconds);
+    break;
+  }
+}
 
 void stop_simulation(pid_t* users, pid_t* nodes) {
   int i = 0;
@@ -92,23 +115,46 @@ void periodical_print() {
   }
 }
 
-void summary_print() {
+void summary_print(int reason, int* nof_transactions, pid_t* nodes) {
+  int i = 0;
   /* TODO: bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
   /* TODO: bilancio di ogni processo nodo */
   fprintf(LOG_FILE, "NUMBER OF INACTIVE USERS: %d\n", inactive_users);
   fprintf(LOG_FILE, "NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n", book->cursor);
-  /* TODO: per ogni processo nodo, numero di transazioni ancora presenti nella transaction pool. Forse farlo ritornare come status? */
 
+  fprintf(LOG_FILE, "\n\n");
 
+  fprintf(LOG_FILE, "Number of transactions left per node:\n");
+  while (i < SO_NODES_NUM) {
+    fprintf(LOG_FILE, "NODE %d: %d transactions left\n", nodes[i], nof_transactions[i]);
+    i++;
+  }
 }
 
 int main() {
+  sigset_t mask;
+  struct sigaction act;
   pid_t* users = init_list(SO_USERS_NUM);
   pid_t* nodes = init_list(SO_NODES_NUM);
 
   int i = 0;
   struct sembuf sops;
   int sem_id;
+
+  bzero(&mask, sizeof(sigset_t));
+  sigemptyset(&mask);
+  act.sa_handler = handler;
+  act.sa_flags = 0;
+  act.sa_mask = mask;
+
+  if (sigaction(SIGALRM, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGTERM, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGTERM.\n");
+    exit(EXIT_FAILURE);
+  }
 
   if ((shm_id = start_shared_memory()) == -1) {
     fprintf(ERR_FILE, "master: cannot start shared memory. Please clear the shm with id %d\n", getpid());
@@ -189,49 +235,78 @@ int main() {
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 
-  i = 0;
-  while (i < SO_SIM_SEC && inactive_users < SO_USERS_NUM && book->cursor < SO_REGISTRY_SIZE) {
-    int status = 0;
-    int terminated_p = wait(&status);
-    if (terminated_p == -1) {
-      if (errno == EINTR) {
-        continue;
+  {
+    i = 0;
+    int* nof_transactions[SO_NODES_NUM];
+    while (!stop_sim && simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && book->cursor < SO_REGISTRY_SIZE) {
+      int status = 0;
+      int node_index = 0;
+      int terminated_p = wait(&status);
+      if (terminated_p == -1) {
+        if (errno == EINTR) {
+          continue;
+        }
+        exit(EXIT_FAILURE);
       }
-      fprintf(ERR_FILE, "master, che cazzo ci fai qui\n");
-      exit(EXIT_FAILURE);
+      if ((node_index = find_element(nodes, SO_NODES_NUM, terminated_p)) != -1) {
+        inactive_nodes++;
+        if (WIFEXITED(status)) {
+          if (WEXITSTATUS(status) == EXIT_FAILURE) {
+            fprintf(ERR_FILE, "Node %d encountered an error. Continuing simulation...\n", terminated_p);
+            nof_transactions[node_index] = -1;
+          }
+          else {
+            fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
+            cleanup(users, nodes);
+            exit(EXIT_FAILURE);
+          }
+        }
+      }
+      else {
+        inactive_users++;
+      }
     }
-    if (list_contains(nodes, SO_NODES_NUM, terminated_p)) {
-      if (WIFEXITED(status)) {
-        switch (WEXITSTATUS(status)) {
-        case EXIT_SUCCESS:
+    stop_simulation(users, nodes);
+
+    while (1) {
+      int status;
+      int index;
+      int terminated_p = wait(&status);
+      if (terminated_p == -1) {
+        if (errno == EINTR) {
+          continue;
+        }
+        else if (errno == ECHILD) {
           break;
-        case EXIT_FAILURE:
-          break;
-        case EARLY_FAILURE:
-          break;
-        default:
-          break;
+        }
+        exit(EXIT_FAILURE);
+      }
+      if ((index = find_element(nodes, SO_NODES_NUM, terminated_p)) != -1) {
+        if (WIFEXITED(status)) {
+          int exit_status = 0;
+          switch (exit_status = WEXITSTATUS(status)) {
+          case EXIT_FAILURE:
+            nof_transactions[index] = -1;
+            break;
+          default:
+            nof_transactions[index] = exit_status;
+            break;
+          }
         }
       }
     }
-    else {
-      inactive_users++;
+
+    int reason = SIM_END_SEC;
+    if (SO_USERS_NUM == 0) {
+      reason = SIM_END_USR;
     }
-
+    else if (book->cursor == SO_REGISTRY_SIZE) {
+      reason = SIM_END_SIZ;
+    }
+    summary_print(reason, nof_transactions, nodes);
   }
 
-  stop_simulation(users, nodes);
-  fprintf(LOG_FILE, "End simulation reason: ");
-  if (i == SO_SIM_SEC) {
-    fprintf(LOG_FILE, "SIMULATION TIME RUN OFF\n");
-  }
-  else if (SO_USERS_NUM == 0) {
-    fprintf(LOG_FILE, "ACTIVE USERS REACHED 0\n");
-  }
-  else if (book->cursor == SO_REGISTRY_SIZE) {
-    fprintf(LOG_FILE, "MASTER BOOK CAPACITY REACHED MAXIMUM CAPACITY\n");
-  }
-  summary_print();
+
   free_list(users);
   free_list(nodes);
   exit(EXIT_SUCCESS);
