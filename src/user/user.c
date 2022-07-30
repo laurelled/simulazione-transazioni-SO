@@ -1,5 +1,7 @@
 #include "../transaction.h"
 #include "../utils/utils.h"
+#include "../pid_list/pid_list.h"
+
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>

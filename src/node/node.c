@@ -1,6 +1,6 @@
 #include "../utils/utils.h"
 #include "../transaction.h"
-#include "../list/list.h"
+#include "../pid_list/pid_list.h"
 
 #include <signal.h>
 #include <sys/ipc.h>
@@ -11,7 +11,6 @@
 #include <strings.h>
 #include <unistd.h>
 #include <stdio.h>
-/*#include <errno.h>*/
 
 #define REFUSE_TRANSACTION SIGUSR1
 
@@ -27,7 +26,7 @@ extern int SO_TP_SIZE;
 extern int SO_MAX_TRANS_PROC_NSEC;
 extern int SO_MIN_TRANS_PROC_NSEC;
 
-static list friends;
+static pid_t* friends;
 static transaction* transaction_pool;
 static int nof_transaction;
 
@@ -41,7 +40,7 @@ static void sig_handler(int sig) {
   switch (sig) {
   case SIGTERM:
     cleanup();
-    exit(EXIT_SUCCESS);
+    exit(nof_transaction);
   case SIGUSR1:
   {
     int msg_num;
@@ -52,7 +51,7 @@ static void sig_handler(int sig) {
     }
     msg_num = stats.msg_qnum;
     if (msg_num > 0) {
-      register unsigned int i = 0;
+      int i = 0;
       while (i++ < msg_num) {
         struct msg incoming;
         transaction t;
@@ -82,7 +81,7 @@ static void init_node()
   struct msqid_ds stats;
 
   /* transaction pool init */
-  transaction_pool = (transaction*)calloc(SO_TP_SIZE, sizeof(transaction));
+  transaction_pool = (transaction*)malloc(SO_TP_SIZE * sizeof(transaction));
   if (transaction_pool == NULL) {
     fprintf(ERR_FILE, "init_node: cannot allocate memory for transaction_pool. Check memory usage.\n");
     exit(EXIT_FAILURE);
@@ -112,7 +111,7 @@ static void init_node()
   }
 
   /* system V message queue */
-  if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IWUSR | S_IRUSR)) <0) {
+  if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IWUSR | S_IRUSR)) < 0) {
     fprintf(ERR_FILE, "init_node: message queue already exists. Check ipcs and remove it with iprm -Q %d.\n", getpid());
     cleanup();
     exit(EXIT_FAILURE);
@@ -122,7 +121,7 @@ static void init_node()
     cleanup();
     exit(EXIT_FAILURE);
   }
-  stats.msg_qbytes = sizeof(struct msg) * SO_TP_SIZE;
+  stats.msg_qbytes = sizeof(struct msg) * (long unsigned int) SO_TP_SIZE;
   if (msgctl(queue_id, IPC_SET, &stats) < 0) {
     fprintf(ERR_FILE, "init_node: cannot write msgqueue stats. Check user permission.\n");
     cleanup();
@@ -142,6 +141,7 @@ static void shift_pool()
 static transaction* extract_block()
 {
   int gain = 0;
+  int i = 0;
   transaction node_transaction;
   transaction* block = calloc(SO_BLOCK_SIZE, sizeof(transaction));
   if (block == NULL) {
@@ -149,7 +149,6 @@ static transaction* extract_block()
     cleanup();
     exit(EXIT_FAILURE);
   }
-  register int i = 0;
   while (i < SO_BLOCK_SIZE - 1)
   {
     /* TODO Check transazione non è presente nel libro mastro */
