@@ -6,6 +6,6 @@
 pid_t* init_list(int size);
 void free_list(pid_t* l);
 int random_element(pid_t* l, int size);
-int list_contains(pid_t* l, int size, pid_t pid);
+int find_element(pid_t* l, int size, pid_t pid);
 
 #endif
