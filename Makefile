@@ -2,26 +2,32 @@ CC = gcc
 
 all: node ledger utils transaction
 
-CFLAGS = -g -Wall -Wextra -Wpedantic -Wconversion -std=c89 -pedantic
+CFLAGS = -std=c89 -pedantic
 
 INCLUDES = src/**/*.h
 
 COMMON_DEPS = $(INCLUDES) Makefile
 
-node: src/node/node.c utils transaction ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $<
+master: src/master.c node user transaction utils pid_list load_constants ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o build/$@.o
 
-ledger: src/ledger/ledger.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $<
+node: src/node/node.c utils transaction pid_list ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o build/$@.o
+
+pid_list: src/pid_list/pid_list.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o build/$@.o
 
 user: src/user/user.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $<
+	${CC} ${CFLAGS} -c $< -o build/$@.o
+
+load_constants: src/load_constants/load_constants.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o build/$@.o
 
 transaction: src/transaction.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $<
+	${CC} ${CFLAGS} -c $< -o build/$@.o
 
 utils: src/utils/utils.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $<
+	${CC} ${CFLAGS} -c $< -o build/$@.o
 
 clean:
 	rm -f build/* bin/*
