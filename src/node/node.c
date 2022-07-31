@@ -2,16 +2,22 @@
 #include "../master_book/master_book.h"
 #include "../pid_list/pid_list.h"
 
-#include <signal.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <sys/ipc.h>
-#include <sys/msg.h>
+#include <sys/sem.h>
+#include <sys/wait.h>
+#include <string.h>
+#include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/msg.h>
-#include <stdlib.h>
-#include <strings.h>
+#include <signal.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
 
+#define SELF_SENDER -1
 #define REFUSE_TRANSACTION SIGUSR1
 
 
@@ -23,6 +29,7 @@ extern int SO_MIN_TRANS_PROC_NSEC;
 static pid_t* friends;
 static transaction* transaction_pool;
 static int nof_transaction;
+
 
 void cleanup() {
   free(transaction_pool);
@@ -68,7 +75,7 @@ static void sig_handler(int sig) {
 
 }
 
-static void init_node()
+static void generate()
 {
   sigset_t mask;
   struct sigaction act;
@@ -123,7 +130,7 @@ static void init_node()
   }
 }
 
-static void shift_pool()
+static void get_out_of_the_pool()
 {
   register int i = 0;
   while (i < SO_BLOCK_SIZE - 1)
@@ -145,34 +152,68 @@ static transaction* extract_block()
   }
   while (i < SO_BLOCK_SIZE - 1)
   {
-    /* TODO Check transazione non è presente nel libro mastro */
+    /* check transazione non è presente nel libro mastro non necessario (se è nella transaction pool non è ANCORA nel libro mastro) */
     block[i] = transaction_pool[i];
     gain += block[i].reward;
     i++;
   }
 
-  shift_pool();
-
-  new_transaction(&node_transaction, getpid(), SELF_RECIEVER, gain, 0);
+  new_transaction(&node_transaction, SELF_SENDER, getpid(), gain, 0);
   block[SO_BLOCK_SIZE] = node_transaction;
   return block;
 }
 
-void simulate_processing() {
+void simulate_processing(transaction* block) {
+
+  struct master_book* book;
+  struct sembuf sops;
+  int sem_id;
+  int shm_id;
   sigset_t mask;
+
+
+  if (sem_id = semget(getppid(), 1, S_IRUSR | S_IWUSR) == -1) {
+    fprintf(ERR_FILE, "node: cannot retrieve sem_id from master");
+    cleanup();
+    exit(EXIT_FAILURE);
+  }
+
+  if (shm_id == shmget(getppid(), 0, 0) == -1) {
+    fprintf(ERR_FILE, "node: cannot retrieve shm_id from master");
+    cleanup();
+    exit(EXIT_FAILURE);
+  }
+
+  if ((book = get_master_book(shm_id)) == NULL) {
+    fprintf(ERR_FILE, "node: the process cannot be attached to the shared memory.\n");
+    cleanup();
+    exit(EXIT_FAILURE);
+  }
   bzero(&mask, sizeof(sigset_t));
 
   sigemptyset(&mask);
   sigaddset(&mask, SIGUSR1);
   sigprocmask(SIG_BLOCK, &mask, NULL);
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
+  sops.sem_num = 1;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  book->blocks[book->cursor] = block;
+  book->cursor++;
+
+  sops.sem_num = 1;
+  sops.sem_op = 1;
+  semop(sem_id, &sops, 1);
+  get_out_of_the_pool();
   sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
 
-void generate_node()
+void init_node()
 {
   fprintf(LOG_FILE, "Node PID: %d\n", getpid());
-  init_node();
+  generate();
+
   while (1)
   {
     transaction* block = NULL;
@@ -181,40 +222,9 @@ void generate_node()
       continue;
     }
     block = extract_block();
-    /* TODO: scrittura nel libro mastro */
-    simulate_processing();
+    simulate_processing(block);
+
     free(block);
   }
-}
-/*
-void handler(int sig) {
-  fprintf(LOG_FILE, "SIGINT recieved\n");
-  cleanup();
-  exit(EXIT_SUCCESS);
-}
 
-int main() {
-  int i = 0;
-  signal(SIGINT, handler);
-  while (i++ < 2) {
-    if (fork() == 0) {
-      int q;
-      struct msg msg;
-      transaction t;
-      fprintf(LOG_FILE, "pid: %d\n", getpid());
-      sleep(5);
-      fprintf(LOG_FILE, "5 seconds have passed\n");
-      q = msgget(getppid(), 0);
-      new_transaction(&t, getpid(), 0, 100, 20);
-      msg.hops = 0;
-      msg.transaction = t;
-      if (msgsnd(q, &msg, sizeof(struct msg) - sizeof(unsigned int), IPC_NOWAIT) < 0)
-        fprintf(LOG_FILE, "PID: %d - la coda ha rifiutato il msg\n", getpid());
-      fprintf(LOG_FILE, "PID: %d - sending SIGUSR1 to parent\n", getpid());
-      kill(getppid(), SIGUSR1);
-      exit(EXIT_SUCCESS);
-    }
-  }
-  generate_node();
-  return 0;
-}*/
+}
