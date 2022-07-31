@@ -8,11 +8,14 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <sys/stat.h>
+#include <sys/shm.h>
 #include <errno.h>
+#include <string.h>
 #include <strings.h>
 #include <signal.h>
 #include <stdlib.h>
 
+#define EARLY_FAILURE 69
 
 /*Variabili statici per ogni processo utente*/
 extern int SO_BUDGET_INIT;
@@ -23,24 +26,37 @@ extern int SO_RETRY;
 extern int SO_MIN_TRANS_GEN_NSEC;
 extern int SO_MAX_TRANS_GEN_NSEC;
 
-static int ipc_id;
+struct master_book* book;
 static int cont_try = 0;
 
 void handler(int);
 int calcola_bilancio();
+
 void init_user(int* users, int* nodes)
 {
-  int bilancio_corrente = 0;
+  int bilancio_corrente = SO_BUDGET_INIT;
+  int block_reached;
   struct sigaction sa;
+  int shm_id;
   sigset_t mask;
   sigemptyset(&mask);
   sa.sa_flags = 0;
   sa.sa_mask = mask;
   sa.sa_handler = handler;
   sigaction(SIGUSR1, &sa, NULL);
+
+  if (shm_id == shmget(getppid(), 0, 0) == -1) {
+    fprintf(ERR_FILE, "user: cannot retrieve shm_id from master");
+    exit(EXIT_FAILURE);
+  }
+  if ((book = get_master_book(shm_id)) == NULL) {
+    fprintf(ERR_FILE, "user: the process cannot be attached to the shared memory.\n");
+    exit(EXIT_FAILURE);
+  }
+
   while (cont_try < SO_RETRY)
   {
-    if ((bilancio_corrente = calcola_bilancio()) >= 2) {
+    if ((bilancio_corrente = calcola_bilancio(bilancio_corrente, &block_reached)) >= 2) {
       transaction* t;
       /* estrazione di un destinatario casuale*/
       int random_user = random_element(users, SO_USERS_NUM);
@@ -81,33 +97,60 @@ void init_user(int* users, int* nodes)
 
       transaction.hops = cont_try;
       transaction.transaction = *t;
-      msgsnd(ipc_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT);
-      kill(random_node, SIGUSR1);
+      if (msgsnd(ipc_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+        if (errno != EAGAIN) {
+          fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(ernno));
+        }
+        cont_try++;
+      }
+      else {
+        kill(random_node, SIGUSR1);
+        bilancio -= (transaction->quantita + transaction->reward);
+      }
+      free(t);
+    }
+    else {
+      cont_try++;
     }
 
     /*tempo di attesa dopo l'invio di una transazione*/
-    sigaddset(&mask, SIGUSR1);
-    sigprocmask(SIG_UNBLOCK, &mask, NULL);
-
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
-
-    sigprocmask(SIG_BLOCK, &mask, NULL);
   }
+  exit(EARLY_FAILURE);
 }
 
-int calcola_bilancio()
+int calcola_bilancio(int bilancio, int* block_reached)
 {
-  int bilancio = SO_BUDGET_INIT;
-  /*TODO calcolo degli importi da libro mastro e transazioni inviati*/
+  int i = *block_reached;
+  unsigned int size = book->cursor;
+  while (i < size) {
+    transaction* ptr = book->blocks[i++];
+    int j = 0;
+    while (j++ < SO_BLOCK_SIZE - 1) {
+      if (ptr->receiver == getpid()) {
+        bilancio += ptr->quantita;
+      }
+      else if (ptr->sender == getpid()) {
+        bilancio -= (ptr->quantita + ptr->reward);
+      }
+      ptr++;
+    }
+  }
+  *block_reached = i;
   return bilancio;
 }
 
 void handler(int signal) {
   switch (signal) {
   case SIGUSR1:
-    cont_try++;
+    fprintf(LOG_FILE, "user %d: transaction was accepted\n", getpid());
+    cont_try = 0;
+    break;
+  case SIGTERM:
+    exit(EXIT_SUCCESS);
     break;
   default:
+    fprintf(LOG_FILE, "user %d: an unexpected error has occurred\n", getpid());
     break;
   }
 }
