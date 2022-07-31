@@ -19,6 +19,15 @@
 #include <stdlib.h>
 #include <errno.h>
 
+union semun {
+  int val;
+  struct semid_ds* buf;
+  unsigned short* array;
+#if defined(__linux__)
+  struct seminfo* __buf;
+#endif
+};
+
 #define SIM_END_SEC 0
 #define SIM_END_USR 1
 #define SIM_END_SIZ 2
@@ -38,6 +47,7 @@ struct master_book* book;
 extern int SO_USERS_NUM;
 extern int SO_NODES_NUM;
 extern int SO_SIM_SEC;
+extern int SO_NUM_FRIENDS;
 
 static int inactive_users;
 static int inactive_nodes;
@@ -78,13 +88,16 @@ void cleanup(pid_t* users, pid_t* nodes, int shm_id, int sem_id) {
   free_list(users);
   free_list(nodes);
 
-  if (shmctl(shm_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "%s cleanup: cannot remove shm with id %d\n. Please check ipcs and remove it.\n", __FILE__, shm_id);
+  if (shm_id != -1) {
+    if (shmctl(shm_id, 0, IPC_RMID) == -1) {
+      fprintf(ERR_FILE, "%s cleanup: cannot remove shm with id %d\n. Please check ipcs and remove it.\n", __FILE__, shm_id);
+    }
   }
 
-  if (semctl(sem_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
-    exit(EXIT_FAILURE);
+  if (sem_id != -1) {
+    if (semctl(sem_id, 0, IPC_RMID) == -1) {
+      fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
+    }
   }
 }
 
@@ -118,16 +131,37 @@ void summary_print(int reason, int* nof_transactions, pid_t* nodes) {
   }
 }
 
+pid_t* assign_friends(pid_t* nodes) {
+  pid_t* friends = init_list(SO_NUM_FRIENDS);
+  int i = 0;
+
+  while (i < SO_NUM_FRIENDS) {
+    pid_t random_el = random_element(nodes, SO_NODES_NUM);
+    if (random_el == -1) {
+      fprintf(ERR_FILE, "assign_friends: something went wrong with the extraction of friends\n");
+      free(friends);
+      return NULL;
+    }
+    /* se trova un pid già inserito, estrae un altro pid */
+    if (find_element(friends, SO_NUM_FRIENDS, random_el) != -1)
+      continue;
+    friends[i++] = random_el;
+  }
+
+  return friends;
+}
+
 int main() {
   sigset_t mask;
   struct sigaction act;
+  union semun arg;
   pid_t* users = init_list(SO_USERS_NUM);
   pid_t* nodes = init_list(SO_NODES_NUM);
 
   int i = 0;
   struct sembuf sops;
-  int shm_id;
-  int sem_id;
+  int shm_id = -1;
+  int sem_id = -1;
 
   fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
 
@@ -146,8 +180,23 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
+  if ((sem_id = semget(getpid(), NUM_SEM, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
+    fprintf(ERR_FILE, "master: semaphore %d already exists.\n", getpid());
+    free_list(users);
+    free_list(nodes);
+    exit(EXIT_FAILURE);
+  }
+
+  arg.val = SO_USERS_NUM + SO_NODES_NUM + 1;
+  if (semctl(sem_id, ID_READY, SETVAL, arg) == -1) {
+    fprintf(ERR_FILE, "master: cannot set initial value for sem ID_READY with id %d.\n", sem_id);
+    cleanup(users, nodes, shm_id, sem_id);
+    exit(EXIT_FAILURE);
+  }
+
   if ((shm_id = start_shared_memory()) == -1) {
     fprintf(ERR_FILE, "master: cannot start shared memory. Please clear the shm with id %d\n", getpid());
+    cleanup(users, nodes, shm_id, sem_id);
     exit(EXIT_FAILURE);
   }
   if ((book = get_master_book(shm_id)) == NULL) {
@@ -156,17 +205,12 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  if ((sem_id = semget(getpid(), NUM_SEM, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
-    fprintf(ERR_FILE, "master: semaphore %d already exists.\n", getpid());
-    exit(EXIT_FAILURE);
-  }
-
   while (i < SO_USERS_NUM) {
     pid_t child;
 
     switch ((child = fork())) {
     case -1:
-      fprintf(ERR_FILE, "master: fork failed for user creation.\n");
+      fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
       cleanup(users, nodes, shm_id, sem_id);
       exit(EXIT_FAILURE);
     case 0:
@@ -193,26 +237,32 @@ int main() {
     pid_t child;
     switch ((child = fork())) {
     case -1:
-      fprintf(ERR_FILE, "master: fork failed for node creation.\n");
+      fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
       cleanup(users, nodes, shm_id, sem_id);
       exit(EXIT_FAILURE);
     case 0:
-      generate_node();
+    {
+      struct sembuf sops;
+      pid_t* friends;
+      sops.sem_num = ID_READY;
+      sops.sem_op = -1;
+      semop(sem_id, &sops, 1);
+
+      sops.sem_op = 0;
+      semop(sem_id, &sops, 1);
+
+      friends = assign_friends(nodes);
+
+      generate_node(friends);
       break;
+    }
     default:
       nodes[i++] = child;
       break;
     }
   }
 
-  if (shmctl(shm_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_id);
-    exit(EXIT_FAILURE);
-  }
-
-
-
-  /* master gives "green light" to all user processes */
+  /* master gives "green light" to all child processes */
   sops.sem_num = ID_READY;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
@@ -220,6 +270,11 @@ int main() {
   sops.sem_num = ID_READY;
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
+
+  if (shmctl(shm_id, 0, IPC_RMID) == -1) {
+    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_id);
+    exit(EXIT_FAILURE);
+  }
 
   {
     int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM);
