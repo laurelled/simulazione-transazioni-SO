@@ -65,9 +65,9 @@ static void sig_handler(int sig) {
         if (nof_transaction == SO_TP_SIZE) {
           chosen_friend = random_element(friends, SO_NUM_FRIENDS);
           incoming.hops++;
-          if (msgsnd(ipc_id, &incoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+          if (msgsnd(queue_id, &incoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
             if (errno != EAGAIN) {
-              fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(ernno));
+              fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
             }
           }
           kill(chosen_friend, SIGUSR1);
@@ -91,9 +91,9 @@ static void sig_handler(int sig) {
       struct msg outcoming;
       outcoming.transaction = transaction_pool[--nof_transaction];
       chosen_friend = random_element(friends, SO_NUM_FRIENDS);
-      if (msgsnd(ipc_id, &outcoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+      if (msgsnd(queue_id, &outcoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(ernno));
+          fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
         }
       }
       kill(chosen_friend, SIGUSR1);

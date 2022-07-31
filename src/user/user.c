@@ -38,6 +38,7 @@ void init_user(int* users, int* nodes)
   int block_reached;
   struct sigaction sa;
   int shm_id;
+  int queue_id;
   sigset_t mask;
   sigemptyset(&mask);
   sa.sa_flags = 0;
@@ -86,7 +87,7 @@ void init_user(int* users, int* nodes)
 
       /* system V message queue */
       /* ricerca della coda di messaggi del nodo random */
-      if ((ipc_id = msgget(random_node, 0)) == -1) {
+      if ((queue_id = msgget(random_node, 0)) == -1) {
         fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
         exit(EXIT_FAILURE);
       }
@@ -97,15 +98,15 @@ void init_user(int* users, int* nodes)
 
       transaction.hops = cont_try;
       transaction.transaction = *t;
-      if (msgsnd(ipc_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+      if (msgsnd(queue_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(ernno));
+          fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
         }
         cont_try++;
       }
       else {
         kill(random_node, SIGUSR1);
-        bilancio -= (transaction->quantita + transaction->reward);
+        bilancio_corrente -= (t->quantita + t->reward);
       }
       free(t);
     }
