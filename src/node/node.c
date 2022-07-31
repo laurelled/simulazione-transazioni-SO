@@ -18,15 +18,17 @@
 #include <errno.h>
 
 #define SELF_SENDER -1
-#define REFUSE_TRANSACTION SIGUSR1
+#define ACCEPT_TRANSACTION SIGUSR1
 
 
 static int queue_id;
 extern int SO_TP_SIZE;
+extern int SO_NUM_FRIENDS;
 extern int SO_MAX_TRANS_PROC_NSEC;
 extern int SO_MIN_TRANS_PROC_NSEC;
 
 static pid_t* friends;
+static int nof_friends;
 static transaction* transaction_pool;
 static int nof_transaction;
 
@@ -53,24 +55,52 @@ static void sig_handler(int sig) {
     msg_num = stats.msg_qnum;
     if (msg_num > 0) {
       int i = 0;
+      /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
       while (i++ < msg_num) {
+        int chosen_friend;
         struct msg incoming;
         transaction t;
 
         msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
-        t = incoming.transaction;
         if (nof_transaction == SO_TP_SIZE) {
-          kill(t.sender, REFUSE_TRANSACTION);
+          chosen_friend = random_element(friends, SO_NUM_FRIENDS);
+          incoming.hops++;
+          if (msgsnd(ipc_id, &incoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+            if (errno != EAGAIN) {
+              fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(ernno));
+            }
+          }
+          kill(chosen_friend, SIGUSR1);
         }
         else {
+          t = incoming.transaction;
+          kill(t.sender, ACCEPT_TRANSACTION);
           transaction_pool[nof_transaction++] = t;
         }
+
         fprintf(LOG_FILE, "Recieved transaction from pid: %d\n", t.sender);
         print_transaction(t);
       }
     }
   }
   break;
+  case SIGALRM:
+  {
+    if (nof_transaction > 0) {
+      int chosen_friend;
+      struct msg outcoming;
+      outcoming.transaction = transaction_pool[--nof_transaction];
+      chosen_friend = random_element(friends, SO_NUM_FRIENDS);
+      if (msgsnd(ipc_id, &outcoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+        if (errno != EAGAIN) {
+          fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(ernno));
+        }
+      }
+      kill(chosen_friend, SIGUSR1);
+    }
+    alarm(3);
+    break;
+  }
   }
 
 }
@@ -189,11 +219,6 @@ void simulate_processing(transaction* block) {
     cleanup();
     exit(EXIT_FAILURE);
   }
-  bzero(&mask, sizeof(sigset_t));
-
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGUSR1);
-  sigprocmask(SIG_BLOCK, &mask, NULL);
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
   sops.sem_num = 1;
   sops.sem_op = -1;
@@ -206,7 +231,6 @@ void simulate_processing(transaction* block) {
   sops.sem_op = 1;
   semop(sem_id, &sops, 1);
   get_out_of_the_pool();
-  sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
 
 void init_node()
@@ -221,6 +245,7 @@ void init_node()
       pause();
       continue;
     }
+    alarm(3);
     block = extract_block();
     simulate_processing(block);
 
