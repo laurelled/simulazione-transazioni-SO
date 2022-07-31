@@ -38,50 +38,52 @@ void init_user(int* users, int* nodes)
   sa.sa_mask = mask;
   sa.sa_handler = handler;
   sigaction(SIGUSR1, &sa, NULL);
-  while ((bilancio_corrente = calcola_bilancio()) >= 2)
+  while (cont_try < SO_RETRY)
   {
-    transaction* t;
-    /* estrazione di un destinatario casuale*/
-    int random_user = random_element(users, SO_USERS_NUM);
-    /* estrazione di un nodo casuale*/
-    int random_node = random_element(nodes, SO_NODES_NUM);
-    int cifra_utente;
-    int num;
-    int reward;
-    struct msg transaction;
+    if ((bilancio_corrente = calcola_bilancio()) >= 2) {
+      transaction* t;
+      /* estrazione di un destinatario casuale*/
+      int random_user = random_element(users, SO_USERS_NUM);
+      /* estrazione di un nodo casuale*/
+      int random_node = random_element(nodes, SO_NODES_NUM);
+      int cifra_utente;
+      int num;
+      int reward;
+      struct msg transaction;
 
-    if (random_user == -1) {
-      fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
-      exit(EXIT_SUCCESS);
+      if (random_user == -1) {
+        fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
+        exit(EXIT_SUCCESS);
+      }
+
+      if (random_node == -1) {
+        fprintf(ERR_FILE, "init_user u%d: all nodes have terminated, cannot send transaction.\n", getpid());
+        exit(EXIT_FAILURE);
+      }
+
+      /* generazione di un importo da inviare*/
+      num = (rand() % (bilancio_corrente - 2 + 1)) + 2;
+      reward = num / 100 * SO_REWARD;
+      if (reward == 0)
+        reward = 1;
+      cifra_utente = num - reward;
+
+      /* system V message queue */
+      /* ricerca della coda di messaggi del nodo random */
+      if ((ipc_id = msgget(random_node, 0)) == -1) {
+        fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
+        exit(EXIT_FAILURE);
+      }
+      /* creazione di una transazione e invio di tale al nodo generato*/
+      t = malloc(sizeof(transaction));
+      new_transaction(t, getpid(), random_user, cifra_utente, reward);
+
+
+      transaction.hops = cont_try;
+      transaction.transaction = *t;
+      msgsnd(ipc_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT);
+      kill(random_node, SIGUSR1);
     }
-
-    if (random_node == -1) {
-      fprintf(ERR_FILE, "init_user u%d: all nodes have terminated, cannot send transaction.\n", getpid());
-      exit(EXIT_FAILURE);
-    }
-
-    /* generazione di un importo da inviare*/
-    num = (rand() % (bilancio_corrente - 2 + 1)) + 2;
-    reward = num / 100 * SO_REWARD;
-    if (reward == 0)
-      reward = 1;
-    cifra_utente = num - reward;
-
-    /* system V message queue */
-    /* ricerca della coda di messaggi del nodo random */
-    if ((ipc_id = msgget(random_node, 0)) == -1) {
-      fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
-      exit(EXIT_FAILURE);
-    }
-    /* creazione di una transazione e invio di tale al nodo generato*/
-    t = malloc(sizeof(transaction));
-    new_transaction(t, getpid(), random_user, cifra_utente, reward);
-
-
-    transaction.hops = cont_try;
-    transaction.transaction = *t;
-    msgsnd(ipc_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT);
-    kill(random_node, SIGUSR1);
 
     /*tempo di attesa dopo l'invio di una transazione*/
     sigaddset(&mask, SIGUSR1);
