@@ -11,6 +11,7 @@ int SO_MIN_TRANS_PROC_NSEC;
 int SO_USERS_NUM;
 int SO_NODES_NUM;
 int SO_SIM_SEC;
+int SO_NUM_FRIENDS;
 int SO_BUDGET_INIT;
 int SO_USERS_NUM;
 int SO_NODES_NUM;
@@ -50,6 +51,7 @@ void load_constants() {
   SO_USERS_NUM = retrieve_constant("SO_USERS_NUM");
   SO_NODES_NUM = retrieve_constant("SO_NODES_NUM");
   SO_SIM_SEC = retrieve_constant("SO_SIM_SEC");
+  SO_NUM_FRIENDS = retrieve_constant("SO_NUM_FRIENDS");
 
   SO_BUDGET_INIT = retrieve_constant("SO_BUDGET_INIT");
   SO_USERS_NUM = retrieve_constant("SO_USERS_NUM");
