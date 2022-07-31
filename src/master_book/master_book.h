@@ -18,6 +18,11 @@ struct master_book {
   transaction** blocks;
 };
 
+struct msg {
+  unsigned int hops;
+  transaction transaction;
+};
+
 
 struct master_book* get_master_book(int shm_id);
 void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);

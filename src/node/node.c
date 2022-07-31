@@ -14,12 +14,6 @@
 
 #define REFUSE_TRANSACTION SIGUSR1
 
-struct msg {
-  unsigned int hops;
-  transaction transaction;
-};
-static struct sigaction ACT_SIGUSR1_DFL;
-static struct sigaction ACT_SIGTERM_DFL;
 
 static int queue_id;
 extern int SO_TP_SIZE;
@@ -99,12 +93,12 @@ static void init_node()
   act.sa_flags = SA_NODEFER;
   act.sa_mask = mask;
 
-  if (sigaction(SIGUSR1, &act, &ACT_SIGUSR1_DFL) < 0) {
+  if (sigaction(SIGUSR1, &act, NULL) < 0) {
     fprintf(ERR_FILE, "init_node: could not associate handler to SIGUSR1.\n");
     cleanup();
     exit(EXIT_FAILURE);
   }
-  if (sigaction(SIGTERM, &act, &ACT_SIGTERM_DFL) < 0) {
+  if (sigaction(SIGTERM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "init_node: could not associate handler to SIGTERM.\n");
     cleanup();
     exit(EXIT_FAILURE);

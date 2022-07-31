@@ -26,11 +26,6 @@ extern int SO_MAX_TRANS_GEN_NSEC;
 static int ipc_id;
 static int cont_try = 0;
 
-
-struct msg {
-  unsigned int hops;
-  transaction transaction;
-};
 void handler(int);
 int calcola_bilancio();
 void init_user(int* users, int* nodes)
