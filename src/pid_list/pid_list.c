@@ -24,7 +24,7 @@ int random_element(pid_t* list, int size) {
 
   register i = 0;
   while (i < size) {
-    list[i] = cpy[i];
+    cpy[i] = list[i];
     i++;
   }
 
@@ -39,14 +39,14 @@ int random_element(pid_t* list, int size) {
       pid_t temp = random_el;
       found = 0;
 
-      random_el = cpy[size - 1];
+      cpy[r_index] = cpy[size - 1];
       cpy[size - 1] = temp;
       size--;
     }
-  } while (size > 0 && found); /* evita di estrarre lo stesso processo in cui ci troviamo o di trovare un utente terminato*/
+  } while (size > 0 && !found); /* evita di estrarre lo stesso processo in cui ci troviamo o di trovare un utente terminato*/
 
   free(cpy);
-  return size >= 0 ? random_el : -1;
+  return size > 0 ? random_el : -1;
 }
 
 int find_element(pid_t* l, int size, pid_t pid) {
