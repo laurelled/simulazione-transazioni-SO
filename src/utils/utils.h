@@ -5,6 +5,5 @@
 
 #define LOG_FILE stdout
 #define ERR_FILE stderr
-int retrieve_constant(const char*);
-int sleep_random_from_range(int min, int max);
+void sleep_random_from_range(int min, int max);
 #endif
