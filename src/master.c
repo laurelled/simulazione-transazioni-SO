@@ -10,6 +10,7 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <sys/wait.h>
+#include <string.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/msg.h>
@@ -32,12 +33,14 @@ union semun {
 #define SIM_END_USR 1
 #define SIM_END_SIZ 2
 
+#define NUM_PROC SO_NODES_NUM + SO_USERS_NUM + 1
 #define EARLY_FAILURE 69
 
 #define MAX_USERS_TO_PRINT 10
 #define SO_REGISTRY_SIZE 10
 
 #define ID_READY 0
+#define ID_MEM 1 /*TODO semaforo per accesso scrittura alla memoria*/
 #define NUM_SEM 2
 
 #define SHM_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
@@ -49,36 +52,59 @@ extern int SO_NODES_NUM;
 extern int SO_SIM_SEC;
 extern int SO_NUM_FRIENDS;
 
+static pid_t* users;
+static pid_t* nodes;
+
+static int* user_budget;
+static int* node_budget;
+static int block_reached;
+
 static int inactive_users;
-static int inactive_nodes;
+static int nof_nodes;
 static int simulation_seconds;
 static int stop_sim = 0;
 
-
-void handler(int signal) {
-  switch (signal) {
-  case SIGALRM:
-    fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d", SO_USERS_NUM - inactive_users, SO_NODES_NUM - inactive_nodes);
-    /* il budget corrente di ogni processo utente e di ogni processo nodo, cosı̀ come registrato nel libro mastro
-    (inclusi i processi utente terminati). Oppure quelli con maggior e minor budget. */
-    simulation_seconds++;
-    alarm(1);
-    break;
-  case SIGINT:
-    stop_sim = 1;
-    fprintf(LOG_FILE, "master: recieved a SIGTERM at %ds from simulation start\n", simulation_seconds);
-    break;
+void periodical_update(pid_t* users, int* user_budget, int* node_budget) {
+  int i = block_reached;
+  unsigned int size = book->cursor;
+  while (i < size) {
+    transaction* ptr = book->blocks[i++];
+    int j = 0;
+    int index;
+    while (j++ < SO_BLOCK_SIZE - 1) {
+      int index;
+      if ((index = find_element(users, SO_USERS_NUM, ptr->sender)) != -1) {
+        user_budget[index] -= (ptr->quantita + ptr->reward);
+        index = find_element(users, SO_USERS_NUM, ptr->receiver);
+        user_budget[index] += ptr->quantita;
+      }
+      ptr++;
+    }
+    index = find_element(nodes, SO_NODES_NUM, ptr->receiver);
+    node_budget[index] += ptr->quantita;
   }
+  block_reached = i;
 }
 
 void stop_simulation(pid_t* users, pid_t* nodes) {
   int i = 0;
-  while (users[i] != 0 && i < SO_USERS_NUM) {
-    kill(users[i++], SIGTERM);
+  pid_t child;
+  while ((child = users[i]) != 0 && i < SO_USERS_NUM) {
+    if (kill(child, SIGTERM) == -1) {
+      if (errno == ESRCH)
+        continue;
+
+      fprintf(ERR_FILE, "stop_simulation: encountered an unexpected error while trying to kill user %d\n", child);
+      exit(EXIT_FAILURE);
+    }
   }
   i = 0;
-  while (nodes[i] != 0 && i < SO_NODES_NUM) {
-    kill(nodes[i++], SIGTERM);
+  while (child = nodes[i] != 0 && i < SO_NODES_NUM) {
+    if (kill(nodes[i++], SIGTERM) == -1 && errno == ESRCH) {
+      continue;
+    }
+    fprintf(ERR_FILE, "stop simulation: encountered an unexpected error while trying to kill node %d\n", child);
+    exit(EXIT_FAILURE);
   }
 }
 
@@ -105,17 +131,21 @@ int  start_shared_memory() {
   return shmget(getpid(), SHM_SIZE, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 }
 
-void periodical_print() {
-  fprintf(LOG_FILE, "ACTIVE USERS: %d | ACTIVE NODES: %d\n\n", SO_USERS_NUM, SO_NODES_NUM);
-  if (SO_NODES_NUM < MAX_USERS_TO_PRINT) {
-
+void periodical_print(pid_t* users, int* user_budget, int* node_budget) {
+  int i = 0;
+  fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d", SO_USERS_NUM - inactive_users, SO_NODES_NUM);
+  /* budget di ogni processo utente (inclusi quelli terminati prematuramente)*/
+  while (i < SO_USERS_NUM) {
+    fprintf(LOG_FILE, "CHILD PID%d : %d\n", users[i], user_budget[i++]);
   }
-  else {
-
+  i = 0;
+  /* budget di ogni processo nodo */
+  while (i < SO_NODES_NUM) {
+    fprintf(LOG_FILE, "NODE PID%d : %d\n", nodes[i], node_budget[i++]);
   }
 }
 
-void summary_print(int reason, int* nof_transactions, pid_t* nodes) {
+void summary_print(int ending_reason, int* nof_transactions, pid_t* nodes) {
   int i = 0;
   /* TODO: bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
   /* TODO: bilancio di ogni processo nodo */
@@ -129,6 +159,17 @@ void summary_print(int reason, int* nof_transactions, pid_t* nodes) {
     fprintf(LOG_FILE, "NODE %d: %d transactions left\n", nodes[i], nof_transactions[i]);
     i++;
   }
+}
+
+void wait_siblings(int sem_id, int sem_num) {
+  struct sembuf sops;
+  pid_t* friends;
+  sops.sem_num = sem_num;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  sops.sem_op = 0;
+  semop(sem_id, &sops, 1);
 }
 
 pid_t* assign_friends(pid_t* nodes) {
@@ -151,17 +192,54 @@ pid_t* assign_friends(pid_t* nodes) {
   return friends;
 }
 
+void handler(int signal) {
+  switch (signal) {
+  case SIGALRM:
+    periodical_update(users, user_budget, node_budget);
+    periodical_print(users, user_budget, node_budget);
+    simulation_seconds++;
+    alarm(1);
+    break;
+  case SIGINT:
+    stop_sim = 1;
+    fprintf(LOG_FILE, "master: recieved a SIGTERM at %ds from simulation start\n", simulation_seconds);
+    break;
+  case SIGUSR1:
+  {
+
+    pid_t child;
+    switch ((child = fork())) {
+    case -1:
+      fprintf(ERR_FILE, "master handler: fork failed for node creation.\n");
+      /*cleanup(users, nodes, shm_id, sem_id); TODO : parametri da vedere*/
+      exit(EXIT_FAILURE);
+      break;
+    case 0:
+    {
+      pid_t* friends;
+      friends = assign_friends(nodes);
+      init_node(friends);
+      break;
+    }
+    default:
+      nodes[nof_nodes++] = child;
+      break;
+    }
+
+    break;
+  }
+  }
+}
+
 int main() {
   sigset_t mask;
   struct sigaction act;
-  union semun arg;
-  pid_t* users = init_list(SO_USERS_NUM);
-  pid_t* nodes = init_list(SO_NODES_NUM);
-
-  int i = 0;
   struct sembuf sops;
   int shm_id = -1;
   int sem_id = -1;
+  users = init_list(SO_USERS_NUM);
+  nodes = init_list(SO_NODES_NUM);
+  nof_nodes = SO_NODES_NUM;
 
   fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
 
@@ -173,10 +251,12 @@ int main() {
 
   if (sigaction(SIGALRM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
+    cleanup(users, nodes, shm_id, sem_id);
     exit(EXIT_FAILURE);
   }
   if (sigaction(SIGINT, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGTERM.\n");
+    cleanup(users, nodes, shm_id, sem_id);
     exit(EXIT_FAILURE);
   }
 
@@ -187,9 +267,14 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  arg.val = SO_USERS_NUM + SO_NODES_NUM + 1;
-  if (semctl(sem_id, ID_READY, SETVAL, arg) == -1) {
+  if (semctl(sem_id, ID_READY, SETVAL, NUM_PROC) == -1) {
     fprintf(ERR_FILE, "master: cannot set initial value for sem ID_READY with id %d.\n", sem_id);
+    cleanup(users, nodes, shm_id, sem_id);
+    exit(EXIT_FAILURE);
+  }
+
+  if (semctl(sem_id, ID_MEM, SETVAL, 1) == -1) {
+    fprintf(ERR_FILE, "master: cannot set initial value for sem ID_MEM with id %d.\n", sem_id);
     cleanup(users, nodes, shm_id, sem_id);
     exit(EXIT_FAILURE);
   }
@@ -205,60 +290,48 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  while (i < SO_USERS_NUM) {
-    pid_t child;
+  {
+    int i = 0;
+    while (i < SO_USERS_NUM) {
+      pid_t child;
 
-    switch ((child = fork())) {
-    case -1:
-      fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
-      cleanup(users, nodes, shm_id, sem_id);
-      exit(EXIT_FAILURE);
-    case 0:
-    {
-      struct sembuf sops;
-      sops.sem_num = ID_READY;
-      sops.sem_op = -1;
-      semop(sem_id, &sops, 1);
-
-      sops.sem_op = 0;
-      semop(sem_id, &sops, 1);
-
-      init_user(users, nodes);
-      break;
+      switch ((child = fork())) {
+      case -1:
+        fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
+        cleanup(users, nodes, shm_id, sem_id);
+        exit(EXIT_FAILURE);
+      case 0:
+      {
+        wait_siblings(sem_id, ID_READY);
+        init_user(users, nodes);
+        break;
+      }
+      default:
+        users[i++] = child;
+        break;
+      }
     }
-    default:
-      users[i++] = child;
-      break;
-    }
-  }
 
-  i = 0;
-  while (i < SO_NODES_NUM) {
-    pid_t child;
-    switch ((child = fork())) {
-    case -1:
-      fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
-      cleanup(users, nodes, shm_id, sem_id);
-      exit(EXIT_FAILURE);
-    case 0:
-    {
-      struct sembuf sops;
-      pid_t* friends;
-      sops.sem_num = ID_READY;
-      sops.sem_op = -1;
-      semop(sem_id, &sops, 1);
-
-      sops.sem_op = 0;
-      semop(sem_id, &sops, 1);
-
-      friends = assign_friends(nodes);
-
-      generate_node(friends);
-      break;
-    }
-    default:
-      nodes[i++] = child;
-      break;
+    i = 0;
+    while (i < SO_NODES_NUM) {
+      pid_t child;
+      switch ((child = fork())) {
+      case -1:
+        fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
+        cleanup(users, nodes, shm_id, sem_id);
+        exit(EXIT_FAILURE);
+      case 0:
+      {
+        pid_t* friends;
+        wait_siblings(sem_id, ID_READY);
+        friends = assign_friends(nodes);
+        init_node(friends);
+        break;
+      }
+      default:
+        nodes[i++] = child;
+        break;
+      }
     }
   }
 
@@ -267,6 +340,7 @@ int main() {
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
+  /*test per debug*/
   sops.sem_num = ID_READY;
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
@@ -278,9 +352,9 @@ int main() {
 
   {
     int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM);
-    int reason;
+    int ending_reason;
 
-    i = 0;
+    int i = 0;
     while (!stop_sim && simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && book->cursor < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
@@ -290,14 +364,16 @@ int main() {
           continue;
         }
         cleanup(users, nodes, shm_id, sem_id);
+        fprintf(ERR_FILE, "master: wait failed for an unexpected error: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
       }
       if ((node_index = find_element(nodes, SO_NODES_NUM, terminated_p)) != -1) {
-        inactive_nodes++;
         if (WIFEXITED(status)) {
           if (WEXITSTATUS(status) == EXIT_FAILURE) {
-            fprintf(ERR_FILE, "Node %d encountered an error. Continuing simulation...\n", terminated_p);
-            nof_transactions[node_index] = -1;
+            fprintf(ERR_FILE, "Node %d encountered an error. Stopping simulation\n", terminated_p);
+            cleanup(users, nodes, shm_id, sem_id);
+            free(nof_transactions);
+            exit(EXIT_FAILURE);
           }
           else {
             fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
@@ -341,14 +417,14 @@ int main() {
       }
     }
 
-    reason = SIM_END_SEC;
+    ending_reason = SIM_END_SEC;
     if (SO_USERS_NUM == 0) {
-      reason = SIM_END_USR;
+      ending_reason = SIM_END_USR;
     }
     else if (book->cursor == SO_REGISTRY_SIZE) {
-      reason = SIM_END_SIZ;
+      ending_reason = SIM_END_SIZ;
     }
-    summary_print(reason, nof_transactions, nodes);
+    summary_print(ending_reason, nof_transactions, nodes);
     free(nof_transactions);
   }
 
@@ -362,3 +438,4 @@ int main() {
   fprintf(LOG_FILE, "Completed simulation. Exiting...\n");
   exit(EXIT_SUCCESS);
 }
+
