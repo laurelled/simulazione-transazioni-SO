@@ -19,6 +19,7 @@ int SO_REWARD;
 int SO_MIN_TRANS_GEN_NSEC;
 int SO_MAX_TRANS_GEN_NSEC;
 int SO_RETRY;
+int SO_HOPS;
 
 int retrieve_constant(const char* name)
 {
@@ -52,6 +53,7 @@ void load_constants() {
   SO_NODES_NUM = retrieve_constant("SO_NODES_NUM");
   SO_SIM_SEC = retrieve_constant("SO_SIM_SEC");
   SO_NUM_FRIENDS = retrieve_constant("SO_NUM_FRIENDS");
+  SO_HOPS = retrieve_constant("SO_HOPS");
 
   SO_BUDGET_INIT = retrieve_constant("SO_BUDGET_INIT");
   SO_USERS_NUM = retrieve_constant("SO_USERS_NUM");

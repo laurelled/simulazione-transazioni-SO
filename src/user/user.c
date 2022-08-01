@@ -10,6 +10,7 @@
 #include <sys/msg.h>
 #include <sys/stat.h>
 #include <sys/shm.h>
+#include<sys/sem.h>
 #include <errno.h>
 #include <string.h>
 #include <strings.h>
@@ -26,6 +27,7 @@ extern int SO_MIN_TRANS_GEN_NSEC;
 extern int SO_MAX_TRANS_GEN_NSEC;
 
 static int cont_try = 0;
+static int nof_nodes;
 
 void handler(int);
 int calcola_bilancio(int, struct master_book*, int*);
@@ -33,20 +35,31 @@ int calcola_bilancio(int, struct master_book*, int*);
 void init_user(int* users, int* nodes)
 {
   struct master_book* book;
-
+  struct sembuf sops;
+  int sem_id;
   int bilancio_corrente = SO_BUDGET_INIT;
   int block_reached;
   struct sigaction sa;
   int shm_id;
+  int shm_node;
   int queue_id;
   sigset_t mask;
+  nof_nodes = SO_NODES_NUM;
   sigemptyset(&mask);
   sa.sa_flags = 0;
   sa.sa_mask = mask;
   sa.sa_handler = handler;
   sigaction(SIGUSR1, &sa, NULL);
 
-  if (shm_id == shmget(getppid(), 0, 0) == -1) {
+  if ((sem_id = semget(getppid(), 0, 0)) == -1) {
+    fprintf(ERR_FILE, "user n%d: err\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+  if (shm_id = shmget(getppid(), 0, 0) == -1) {
+    fprintf(ERR_FILE, "user: cannot retrieve shm_id from master");
+    exit(EXIT_FAILURE);
+  }
+  if (shm_node = shmget(getppid(), 0, 0) == -1) {
     fprintf(ERR_FILE, "user: cannot retrieve shm_id from master");
     exit(EXIT_FAILURE);
   }
@@ -54,6 +67,15 @@ void init_user(int* users, int* nodes)
     fprintf(ERR_FILE, "user: the process cannot be attached to the shared memory.\n");
     exit(EXIT_FAILURE);
   }
+  /*da chiedere non ricordo cosa si dovesse implementare in user per i semafori*/
+  sops.sem_num = 0;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  sops.sem_op = 0;
+  semop(sem_id, &sops, 1);
+  /*fine dubbio*/
+
 
   while (cont_try < SO_RETRY)
   {
@@ -62,7 +84,7 @@ void init_user(int* users, int* nodes)
       /* estrazione di un destinatario casuale*/
       int random_user = random_element(users, SO_USERS_NUM);
       /* estrazione di un nodo casuale*/
-      int random_node = random_element(nodes, SO_NODES_NUM);
+      int random_node = random_element(&shm_node, nof_nodes);
       int cifra_utente;
       int num;
       int reward;
@@ -149,6 +171,9 @@ void handler(int signal) {
     break;
   case SIGTERM:
     exit(EXIT_SUCCESS);
+    break;
+  case SIGUSR2:
+    nof_nodes++;
     break;
   default:
     fprintf(ERR_FILE, "user %d: an unexpected signal was recieved.\n", getpid());
