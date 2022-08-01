@@ -25,14 +25,15 @@ extern int SO_RETRY;
 extern int SO_MIN_TRANS_GEN_NSEC;
 extern int SO_MAX_TRANS_GEN_NSEC;
 
-struct master_book* book;
 static int cont_try = 0;
 
 void handler(int);
-int calcola_bilancio();
+int calcola_bilancio(int, struct master_book*, int*);
 
 void init_user(int* users, int* nodes)
 {
+  struct master_book* book;
+
   int bilancio_corrente = SO_BUDGET_INIT;
   int block_reached;
   struct sigaction sa;
@@ -56,7 +57,7 @@ void init_user(int* users, int* nodes)
 
   while (cont_try < SO_RETRY)
   {
-    if ((bilancio_corrente = calcola_bilancio(bilancio_corrente, &block_reached)) >= 2) {
+    if ((bilancio_corrente = calcola_bilancio(bilancio_corrente, book, &block_reached)) >= 2) {
       transaction* t;
       /* estrazione di un destinatario casuale*/
       int random_user = random_element(users, SO_USERS_NUM);
@@ -119,7 +120,7 @@ void init_user(int* users, int* nodes)
   exit(EARLY_FAILURE);
 }
 
-int calcola_bilancio(int bilancio, int* block_reached)
+int calcola_bilancio(int bilancio, struct master_book* book, int* block_reached)
 {
   int i = *block_reached;
   unsigned int size = book->cursor;
@@ -143,14 +144,14 @@ int calcola_bilancio(int bilancio, int* block_reached)
 void handler(int signal) {
   switch (signal) {
   case SIGUSR1:
-    fprintf(LOG_FILE, "user %d: transaction was accepted\n", getpid());
+    fprintf(LOG_FILE, "user %d: transaction was accepted, resetting cont_try.\n", getpid());
     cont_try = 0;
     break;
   case SIGTERM:
     exit(EXIT_SUCCESS);
     break;
   default:
-    fprintf(LOG_FILE, "user %d: an unexpected error has occurred\n", getpid());
+    fprintf(ERR_FILE, "user %d: an unexpected signal was recieved.\n", getpid());
     break;
   }
 }
