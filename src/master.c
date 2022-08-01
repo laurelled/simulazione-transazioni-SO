@@ -34,7 +34,6 @@ union semun {
 #define SIM_END_SIZ 2
 
 #define NUM_PROC SO_NODES_NUM + SO_USERS_NUM + 1
-#define EARLY_FAILURE 69
 
 #define MAX_USERS_TO_PRINT 10
 #define SO_REGISTRY_SIZE 10

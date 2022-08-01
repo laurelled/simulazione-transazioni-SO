@@ -1,4 +1,5 @@
 #include "../master_book/master_book.h"
+#include "user.h"
 #include "../utils/utils.h"
 #include "../pid_list/pid_list.h"
 
@@ -14,8 +15,6 @@
 #include <strings.h>
 #include <signal.h>
 #include <stdlib.h>
-
-#define EARLY_FAILURE 69
 
 /*Variabili statici per ogni processo utente*/
 extern int SO_BUDGET_INIT;
