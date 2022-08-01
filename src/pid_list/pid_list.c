@@ -13,6 +13,18 @@ pid_t* init_list(int size) {
   return new;
 }
 
+pid_t* expand_list(pid_t* l, int old_size, int new_size) {
+  pid_t* expanded = realloc(l, new_size);
+
+  if (expanded != NULL) {
+    int i = old_size;
+    while (i < new_size) {
+      expanded[i++] = 0;
+    }
+  }
+  return expanded;
+}
+
 void free_list(pid_t* l) {
   free(l);
 }
