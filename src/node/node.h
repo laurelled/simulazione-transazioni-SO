@@ -2,5 +2,5 @@
 #define _NODE_H_
 #include <unistd.h>
 
-void init_node(pid_t* friends);
+void init_node(pid_t* friends, int pipe_read);
 #endif

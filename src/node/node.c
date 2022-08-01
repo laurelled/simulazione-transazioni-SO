@@ -21,14 +21,19 @@
 #define ACCEPT_TRANSACTION SIGUSR1
 
 
-static int queue_id;
 extern int SO_TP_SIZE;
 extern int SO_NUM_FRIENDS;
 extern int SO_MAX_TRANS_PROC_NSEC;
 extern int SO_MIN_TRANS_PROC_NSEC;
+extern int SO_HOPS;
+
+/* IPC memories */
+static int queue_id;
+static int pipe_read;
 
 static pid_t* friends;
 static int nof_friends;
+
 static transaction* transaction_pool;
 static int nof_transaction;
 
@@ -62,16 +67,35 @@ static void sig_handler(int sig) {
         transaction t;
 
         msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
-        if (nof_transaction == SO_TP_SIZE) {
+        /*gestione invio transazione al master se hops raggiunti */
+        if (incoming.hops == SO_HOPS) {
+          int master_q;
+          if ((master_q = msgget(getppid(), 0)) == -1) {
+            fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
+            cleanup();
+            exit(EXIT_FAILURE);
+          }
+          if (msgsnd(master_q, &t, sizeof(transaction), IPC_NOWAIT) == -1) {
+            if (errno != EAGAIN) {
+              fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
+            }
+          }
+          kill(getppid(), SIGUSR1);
+        }
+        /*fine gestione hops raggiunti */
+        /*gestione transaction_pool piena */
+        else if (nof_transaction == SO_TP_SIZE) {
           chosen_friend = random_element(friends, SO_NUM_FRIENDS);
           incoming.hops++;
           if (msgsnd(queue_id, &incoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
             if (errno != EAGAIN) {
-              fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
+              fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
             }
           }
+
           kill(chosen_friend, SIGUSR1);
         }
+        /*fine gestione transaction_pool*/
         else {
           t = incoming.transaction;
           kill(t.sender, ACCEPT_TRANSACTION);
@@ -84,6 +108,17 @@ static void sig_handler(int sig) {
     }
   }
   break;
+  case SIGUSR2:
+  {
+    pid_t nodo_ricevuto;
+    if (read(pipe_read, &nodo_ricevuto, sizeof(pid_t)) == -1) {
+      fprintf(ERR_FILE, "node n%d: recieved an unexpected error while trying to read from pipe: %s\n", getpid(), strerror(errno));
+    };
+    friends = expand_list(friends, nof_friends, nof_friends + 1);
+    friends[nof_friends++] = nodo_ricevuto;
+    break;
+  }
+  /*gestione invio transazione periodico*/
   case SIGALRM:
   {
     if (nof_transaction > 0) {
@@ -93,7 +128,7 @@ static void sig_handler(int sig) {
       chosen_friend = random_element(friends, SO_NUM_FRIENDS);
       if (msgsnd(queue_id, &outcoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "init_node u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
+          fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
         }
       }
       kill(chosen_friend, SIGUSR1);
@@ -233,10 +268,28 @@ void simulate_processing(transaction* block) {
   get_out_of_the_pool();
 }
 
-void init_node()
+void init_node(pid_t* friends, int pipe_read)
 {
+  struct sembuf sops;
+  int sem_id;
+  pid_t* friends;
+  friends = friends;
+  nof_friends = SO_NUM_FRIENDS;
+
+  if ((sem_id = semget(getppid(), 0, 0)) == -1) {
+    fprintf(ERR_FILE, "node n%d: err\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+
   fprintf(LOG_FILE, "Node PID: %d\n", getpid());
   generate();
+
+  sops.sem_num = 0;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  sops.sem_op = 0;
+  semop(sem_id, &sops, 1);
 
   while (1)
   {
