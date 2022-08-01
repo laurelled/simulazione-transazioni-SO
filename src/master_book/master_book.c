@@ -40,14 +40,8 @@ void print_transaction(transaction t) {
 
 struct master_book* get_master_book(int shm_id) {
   struct master_book* new = NULL;
-  transaction** ptr;
-  if ((ptr = (transaction**)shmat(shm_id, NULL, 0)) == (void*)-1) {
-    fprintf(ERR_FILE, "master: the process can't be attached\n");
+  if ((new = (struct master_book*)shmat(shm_id, NULL, 0)) == (void*)-1) {
     return NULL;
   }
-  new = malloc(sizeof(struct master_book));
-  new->cursor = 0;
-  new->blocks = ptr;
-
   return new;
 }

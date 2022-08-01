@@ -43,7 +43,7 @@ union semun {
 #define ID_MEM 1 /*TODO semaforo per accesso scrittura alla memoria*/
 #define NUM_SEM 2
 
-#define SHM_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
+#define REGISTRY_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
 
 struct master_book* book;
 
@@ -128,7 +128,7 @@ void cleanup(pid_t* users, pid_t* nodes, int shm_id, int sem_id) {
 }
 
 int  start_shared_memory() {
-  return shmget(getpid(), SHM_SIZE, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+  return shmget(getpid(), sizeof(struct master_book), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 }
 
 void periodical_print(pid_t* users, int* user_budget, int* node_budget) {
@@ -289,6 +289,8 @@ int main() {
     cleanup(users, nodes, shm_id, sem_id);
     exit(EXIT_FAILURE);
   }
+  book->blocks = malloc(REGISTRY_SIZE);
+  book->cursor = 0;
 
   {
     int i = 0;
