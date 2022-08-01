@@ -20,15 +20,6 @@
 #include <stdlib.h>
 #include <errno.h>
 
-union semun {
-  int val;
-  struct semid_ds* buf;
-  unsigned short* array;
-#if defined(__linux__)
-  struct seminfo* __buf;
-#endif
-};
-
 #define SIM_END_SEC 0
 #define SIM_END_USR 1
 #define SIM_END_SIZ 2
