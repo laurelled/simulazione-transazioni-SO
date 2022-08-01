@@ -157,10 +157,34 @@ void periodical_print(pid_t* users, int* user_budget, int* node_budget) {
   }
 }
 
-void summary_print(int ending_reason, int* nof_transactions, pid_t* nodes) {
+void summary_print(int ending_reason, pid_t* users, int* user_budget, pid_t* nodes, pid_t* node_budget, int* nof_transactions) {
   int i = 0;
+
+  switch (ending_reason)
+  {
+  case SIM_END_SEC:
+    fprintf(LOG_FILE, "[!] Simulation ending reason: TIME LIMIT REACHED [!]\n\n");
+    break;
+  case SIM_END_SIZ:
+    fprintf(LOG_FILE, "[!] Simulation ending reason: MASTER BOOK SIZE EXCEEDED [!]\n\n");
+    break;
+  case SIM_END_USR:
+    fprintf(LOG_FILE, "[!] Simulation ending reason: ALL USERS TERMINATED [!]\n\n");
+  default:
+    fprintf(LOG_FILE, "[!] Simulation ending reason: UNEXPECTED ERRORS [!]\n\n");
+    break;
+  }
   /* TODO: bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
+  fprintf(LOG_FILE, "USERS BUDGETS\n");
+  while (i < SO_USERS_NUM) {
+    fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
+  }
   /* TODO: bilancio di ogni processo nodo */
+  i = 0;
+  fprintf(LOG_FILE, "NODES BUDGETS\n");
+  while (i < SO_NODES_NUM) {
+    fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes[i], node_budget[i++]);
+  }
   fprintf(LOG_FILE, "NUMBER OF INACTIVE USERS: %d\n", inactive_users);
   fprintf(LOG_FILE, "NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n", book->cursor);
 
@@ -207,9 +231,9 @@ pid_t* assign_friends(pid_t* nodes) {
 void handler(int signal) {
   switch (signal) {
   case SIGALRM:
+    simulation_seconds++;
     periodical_update(users, user_budget, node_budget);
     periodical_print(users, user_budget, node_budget);
-    simulation_seconds++;
     alarm(1);
     break;
   case SIGINT:
@@ -359,11 +383,6 @@ int main() {
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 
-  if (shmctl(shm_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_id);
-    exit(EXIT_FAILURE);
-  }
-
   {
     int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM);
     int ending_reason;
@@ -400,6 +419,7 @@ int main() {
         inactive_users++;
       }
     }
+    alarm(0);
     stop_simulation(users, nodes);
 
     while (1) {
@@ -431,19 +451,29 @@ int main() {
       }
     }
 
-    ending_reason = SIM_END_SEC;
-    if (SO_USERS_NUM == 0) {
+    ending_reason = -1;
+    if (simulation_seconds == SO_SIM_SEC) {
+      ending_reason = SIM_END_SEC;
+    }
+    else if (SO_USERS_NUM == 0) {
       ending_reason = SIM_END_USR;
     }
     else if (book->cursor == SO_REGISTRY_SIZE) {
       ending_reason = SIM_END_SIZ;
     }
-    summary_print(ending_reason, nof_transactions, nodes);
+
+    periodical_update(users, user_budget, node_budget);
+    summary_print(ending_reason, users, user_budget, nodes, node_budget, nof_transactions);
     free(nof_transactions);
   }
 
   free_list(users);
   free_list(nodes);
+
+  if (shmctl(shm_id, 0, IPC_RMID) == -1) {
+    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_id);
+    exit(EXIT_FAILURE);
+  }
 
   if (semctl(sem_id, 0, IPC_RMID) == -1) {
     fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
