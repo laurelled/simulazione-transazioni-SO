@@ -56,8 +56,6 @@ void load_constants() {
   SO_HOPS = retrieve_constant("SO_HOPS");
 
   SO_BUDGET_INIT = retrieve_constant("SO_BUDGET_INIT");
-  SO_USERS_NUM = retrieve_constant("SO_USERS_NUM");
-  SO_NODES_NUM = retrieve_constant("SO_NODES_NUM");
   SO_REWARD = retrieve_constant("SO_REWARD");
   SO_MIN_TRANS_GEN_NSEC = retrieve_constant("SO_MIN_TRANS_GEN_NSEC");
   SO_MAX_TRANS_GEN_NSEC = retrieve_constant("SO_MAX_TRANS_GEN_NSEC");
