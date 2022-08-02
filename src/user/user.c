@@ -221,8 +221,8 @@ void usr_handler(int signal) {
   }
   case SIGUSR2:
   {
-    fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", SO_RETRY - cont_try);
-    cont_try++;
+    fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try++));
+    break;
   }
   case SIGTERM:
     fprintf(LOG_FILE, "u%d: killed by parent. Ending successfully\n", getpid());

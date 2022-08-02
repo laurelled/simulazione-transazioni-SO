@@ -123,7 +123,7 @@ void master_cleanup(pid_t* users, struct nodes nodes, int shm_nodes_array_id, in
 
   if (shm_book_id != -1) {
     if (shmctl(shm_book_id, IPC_RMID, 0) == -1) {
-      fprintf(ERR_FILE, "%s master_cleanup: cannot remove shm with id %d\n. Please check ipcs and remove it.\n", __FILE__, shm_book_id, shm_book_size_id);
+      fprintf(ERR_FILE, "%s master_cleanup: cannot remove shm with id %d\n. Please check ipcs and remove it.\n", __FILE__, shm_book_id);
     }
   }
 
@@ -581,9 +581,6 @@ int main() {
   semop(sem_id, &sops, 1);
 
   fprintf(LOG_FILE, "GREEN LIGHT\n");
-
-  fprintf(LOG_FILE, "master: array di nodi: %p, nodes 0: %d\n", nodes.array, nodes.array[0]);
-
   /*test per debug*/
   sops.sem_num = ID_READY;
   sops.sem_op = 0;
@@ -677,11 +674,11 @@ int main() {
   free_list(nodes.array);
 
   if (shmctl(shm_book_id, IPC_RMID, NULL) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_book_id, shm_book_size_id);
+    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_book_id);
     exit(EXIT_FAILURE);
   }
   if (shmctl(shm_nodes_array_id, IPC_RMID, NULL) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_book_id, shm_book_size_id);
+    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_nodes_array_id);
     exit(EXIT_FAILURE);
   }
 
