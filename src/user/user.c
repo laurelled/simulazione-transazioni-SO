@@ -75,39 +75,22 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
     exit(EXIT_FAILURE);
   }
 
-  if ((nodes_array = attach_shm_memory(shm_nodes_array)) == NULL) {
+  if ((nodes.array = attach_shm_memory(shm_nodes_array)) == NULL) {
     fprintf(ERR_FILE, "user u%d: the process cannot be attached to the nodes array shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
-  if ((size_nodes = attach_shm_memory(shm_nodes_size)) == NULL) {
+  if ((nodes.size = attach_shm_memory(shm_nodes_size)) == NULL) {
     fprintf(ERR_FILE, "user u%d: the process cannot be attached to the nodes size shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
-  if ((registry = attach_shm_memory(shm_book_id)) == NULL) {
+  if ((book.blocks = attach_shm_memory(shm_book_id)) == NULL) {
     fprintf(ERR_FILE, "user u%d: the process cannot be attached to the registry shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
-  if ((size_book = attach_shm_memory(shm_book_size_id)) == NULL) {
+  if ((book.size = attach_shm_memory(shm_book_size_id)) == NULL) {
     fprintf(ERR_FILE, "user u%d: the process cannot be attached to the book size shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
-
-
-
-  nodes.size = size_nodes;
-  nodes.array = nodes_array;
-  book.size = size_book;
-  book.blocks = registry;
-
-
-  sops.sem_num = 0;
-  sops.sem_op = -1;
-  semop(sem_id, &sops, 1);
-
-  fprintf(LOG_FILE, "u%d: waiting for green light.\n", getpid());
-  sops.sem_op = 0;
-  semop(sem_id, &sops, 1);
-
 
   while (cont_try < SO_RETRY)
   {
@@ -141,10 +124,15 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       /* system V message queue */
       /* ricerca della coda di messaggi del nodo random */
       if ((queue_id = msgget(random_node, S_IWUSR | S_IRUSR)) == -1) {
-        fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
-        exit(EXIT_FAILURE);
+        if (errno == ENOENT) {
+          fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
+          exit(EXIT_FAILURE);
+        }
+        else if (errno == EACCES) {
+          fprintf(ERR_FILE, "init_user u%d: not enough permits to access message queue of node %d \n", getpid(), random_node);
+          exit(EXIT_FAILURE);
+        }
       }
-      fprintf(LOG_FILE, "queue id: %d\n", queue_id);
       /* creazione di una transazione e invio di tale al nodo generato*/
       t = malloc(sizeof(transaction));
       new_transaction(t, getpid(), random_user, cifra_utente, reward);
@@ -153,26 +141,12 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       message.hops = 0;
       message.transaction = *t;
       if (msgsnd(queue_id, &message, sizeof(struct msg), IPC_NOWAIT) == -1) {
-        /*if (errno != EAGAIN) {
+        if (errno != EAGAIN) {
           fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
-        }*/
-        switch (errno) {
-        case EAGAIN:
-          fprintf(LOG_FILE, "Top amo ce l'hai fatta\n");
-          break;
-        case EINVAL:
-          fprintf(LOG_FILE, "msg queue id invalida\n");
-          break;
-        case EIDRM:
-          fprintf(LOG_FILE, "come cazzo è successo\n");
-          break;
-        case EFAULT:
-          fprintf(LOG_FILE, "wtf non è valido il messaggio\n");
-          break;
-        default:
-          fprintf(LOG_FILE, "broski ma che cazzo di errore è %s", strerror(errno));
         }
-
+        else {
+          fprintf(ERR_FILE, "init_user u%d: EGAIN errno recieved: %s.\n", getpid(), strerror(errno));
+        }
         cont_try++;
       }
       else {
@@ -221,7 +195,6 @@ void usr_handler(int signal) {
 
     time(&rawtime);
     timeinfo = localtime(&rawtime);
-    fprintf(LOG_FILE, "%s user %d: transaction was accepted, resetting cont_try.\n", asctime(timeinfo), getpid());
     cont_try = 0;
     break;
   }
