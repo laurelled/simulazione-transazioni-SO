@@ -38,9 +38,9 @@ void print_transaction(transaction t) {
   fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
 }
 
-struct master_book* get_master_book(int shm_id) {
-  struct master_book* new = NULL;
-  if ((new = (struct master_book*)shmat(shm_id, NULL, 0)) == (void*)-1) {
+void* attach_shm_memory(int shm_id) {
+  void* new = NULL;
+  if ((new = shmat(shm_id, NULL, 0)) == (void*)-1) {
     return NULL;
   }
   return new;
