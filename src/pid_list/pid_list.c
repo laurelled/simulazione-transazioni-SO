@@ -3,18 +3,20 @@
 #include <stdlib.h>
 #include <errno.h>
 
-pid_t* init_list(int size) {
-  pid_t* new = malloc(sizeof(pid_t) * size);
-  int i = 0;
-  while (i < size) {
-    new[i++] = 0;
+int* init_list(int size) {
+  int* new = malloc(sizeof(int) * size);
+  if (new != NULL) {
+    int i = 0;
+    while (i < size) {
+      new[i++] = 0;
+    }
   }
 
   return new;
 }
 
-pid_t* expand_list(pid_t* l, int old_size, int new_size) {
-  pid_t* expanded = realloc(l, new_size);
+int* expand_list(int* l, int old_size, int new_size) {
+  int* expanded = realloc(l, new_size);
 
   if (expanded != NULL) {
     int i = old_size;
@@ -25,13 +27,13 @@ pid_t* expand_list(pid_t* l, int old_size, int new_size) {
   return expanded;
 }
 
-void free_list(pid_t* l) {
+void free_list(int* l) {
   free(l);
 }
 
-int random_element(pid_t* list, int size) {
-  pid_t* cpy = malloc(sizeof(pid_t) * size);
-  pid_t random_el = 0;
+int random_element(int* list, int size) {
+  int* cpy = malloc(sizeof(int) * size);
+  int random_el = 0;
   int found;
 
   register i = 0;
@@ -49,7 +51,7 @@ int random_element(pid_t* list, int size) {
     r_index = (rand() % size);
     random_el = cpy[r_index];
     if (getpid() == random_el || (kill(random_el, 0) == -1 && errno == ESRCH)) {
-      pid_t temp = random_el;
+      int temp = random_el;
       found = 0;
 
       cpy[r_index] = cpy[size - 1];
@@ -62,8 +64,8 @@ int random_element(pid_t* list, int size) {
   return size > 0 ? random_el : -1;
 }
 
-int find_element(pid_t* l, int size, pid_t pid) {
-  pid_t* ptr = l;
+int find_element(int* l, int size, int pid) {
+  int* ptr = l;
   int index = -1;
   while (--size > 0 && index != -1) {
     if (ptr[size] == pid) {

@@ -33,7 +33,7 @@ static int cont_try = 0;
 void usr_handler(int);
 int calcola_bilancio(int, struct master_book, int*);
 
-void init_user(pid_t* users, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
+void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
 {
   int sem_id;
 
@@ -52,11 +52,17 @@ void init_user(pid_t* users, int shm_nodes_array, int shm_nodes_size, int shm_bo
   int queue_id;
   sigset_t mask;
   sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
+
   sa.sa_flags = 0;
   sa.sa_mask = mask;
   sa.sa_handler = usr_handler;
   if (sigaction(SIGUSR1, &sa, NULL) == -1) {
     fprintf(ERR_FILE, "user u%d: cannot associate handler to SIGUSR1\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGUSR2, &sa, NULL) == -1) {
+    fprintf(ERR_FILE, "user u%d: cannot associate handler to SIGUSR2\n", getpid());
     exit(EXIT_FAILURE);
   }
   if (sigaction(SIGTERM, &sa, NULL) == -1) {

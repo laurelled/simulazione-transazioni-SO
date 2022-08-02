@@ -26,8 +26,6 @@
 #define SIM_END_USR 1
 #define SIM_END_SIZ 2
 
-#define NUM_PROC (SO_NODES_NUM + SO_USERS_NUM + 1)
-
 #define MAX_USERS_TO_PRINT 10
 #define SO_REGISTRY_SIZE 10
 
@@ -42,7 +40,7 @@ extern int SO_NODES_NUM;
 extern int SO_SIM_SEC;
 extern int SO_NUM_FRIENDS;
 
-static pid_t* users;
+static int* users;
 
 struct nodes nodes;
 struct master_book book;
@@ -55,6 +53,7 @@ static int shm_book_id = -1;
 static int shm_book_size_id = -1;
 static int shm_nodes_array_id = -1;
 static int shm_nodes_size_id = -1;
+static int shm_users_array_id = -1;
 
 
 static int* user_budget;
@@ -65,9 +64,9 @@ static int inactive_users;
 static int simulation_seconds = 0;
 static int stop_sim = 0;
 
-void periodical_update(pid_t* users, int* user_budget, int* node_budget) {
+void periodical_update(int* users, int* user_budget, int* node_budget) {
   int i = block_reached;
-  unsigned int size = *book.size;
+  int size = *book.size;
   while (i < size) {
     transaction* ptr = book.blocks[i++];
     int j = 0;
@@ -87,33 +86,32 @@ void periodical_update(pid_t* users, int* user_budget, int* node_budget) {
   block_reached = i;
 }
 
-void stop_simulation(pid_t* users, struct nodes nodes) {
+void stop_simulation() {
   int i = 0;
-  pid_t child;
+  int child = 0;
   while ((child = users[i]) != 0 && i < SO_USERS_NUM) {
+    i++;
     if (kill(child, SIGTERM) == -1) {
       if (errno == ESRCH)
         continue;
 
-      fprintf(ERR_FILE, "stop_simulation: encountered an unexpected error while trying to kill user %d\n", child);
+      fprintf(ERR_FILE, "stop_simulation: encountered an unexpected error while trying to kill user %d at iteration with i=%d/%d: %s\n", child, i - 1, SO_USERS_NUM, strerror(errno));
       exit(EXIT_FAILURE);
     }
   }
   i = 0;
-  while (child = nodes.array[i] != 0 && i < *nodes.size) {
-    if (kill(nodes.array[i++], SIGTERM) == -1 && errno == ESRCH) {
+  while ((child = nodes.array[i]) != 0 && i < *nodes.size) {
+    i++;
+    if (kill(child, SIGTERM) == -1 && errno == ESRCH) {
       continue;
+      fprintf(ERR_FILE, "stop simulation: encountered an unexpected error while trying to kill node %d: %s\n", child, strerror(errno));
+      exit(EXIT_FAILURE);
     }
-    fprintf(ERR_FILE, "stop simulation: encountered an unexpected error while trying to kill node %d\n", child);
-    exit(EXIT_FAILURE);
   }
 }
 
-void master_cleanup(pid_t* users, struct nodes nodes, int shm_nodes_array_id, int shm_nodes_size_id, int shm_book_id, int shm_book_size_id, int sem_id, int queue_id) {
-  stop_simulation(users, nodes);
-
-  free_list(users);
-  free_list(nodes.array);
+void master_cleanup(int* users, struct nodes nodes, int shm_nodes_array_id, int shm_nodes_size_id, int shm_book_id, int shm_book_size_id, int sem_id, int queue_id) {
+  stop_simulation();
 
   if (shm_book_id != -1) {
     if (shmctl(shm_book_id, IPC_RMID, 0) == -1) {
@@ -156,7 +154,7 @@ int  start_shared_memory(int key, size_t size) {
   return shmget(key, size, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
 }
 
-void periodical_print(pid_t* users, int* user_budget, int* node_budget) {
+void periodical_print(int* users, int* user_budget, int* node_budget) {
   int i = 0;
   fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d", SO_USERS_NUM - inactive_users, SO_NODES_NUM);
   /* budget di ogni processo utente (inclusi quelli terminati prematuramente)*/
@@ -192,7 +190,7 @@ void periodical_print(pid_t* users, int* user_budget, int* node_budget) {
   }
 }
 
-void summary_print(int ending_reason, pid_t* users, int* user_budget, pid_t* nodes, pid_t* node_budget, int* nof_transactions) {
+void summary_print(int ending_reason, int* users, int* user_budget, int* nodes, int* node_budget, int* nof_transactions) {
   int i = 0;
 
   switch (ending_reason)
@@ -232,12 +230,24 @@ void summary_print(int ending_reason, pid_t* users, int* user_budget, pid_t* nod
   }
 }
 
-pid_t* assign_friends(struct nodes nodes) {
-  pid_t* friends = init_list(SO_NUM_FRIENDS);
+void wait_siblings() {
+  struct sembuf sops;
+
+  sops.sem_num = ID_READY;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  fprintf(LOG_FILE, "CHILD %d: waiting for green light.\n", getpid());
+  sops.sem_op = 0;
+  semop(sem_id, &sops, 1);
+}
+
+int* assign_friends(int* array, int size) {
+  int* friends = init_list(SO_NUM_FRIENDS);
   int i = 0;
 
   while (i < SO_NUM_FRIENDS) {
-    pid_t random_el = random_element(nodes.array, *nodes.size);
+    int random_el = random_element(array, size);
     if (random_el == -1) {
       fprintf(ERR_FILE, "assign_friends: something went wrong with the extraction of friends\n");
       free(friends);
@@ -262,13 +272,13 @@ void handler(int signal) {
     break;
   case SIGINT:
     fprintf(LOG_FILE, "master: recieved a SIGINT at %ds from simulation start\n", simulation_seconds);
-    stop_simulation(users, nodes);
+    fprintf(LOG_FILE, "master: child=%d, user[%d]=%d\n", 0, 0, users[0]);
     master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
     exit(EXIT_FAILURE);
     break;
   case SIGUSR1:
   {
-    pid_t child;
+    int child;
     transaction arriva;
     int file_descriptors[2];
     struct sembuf sops;
@@ -295,27 +305,35 @@ void handler(int signal) {
         break;
       case 0:
       {
-        pid_t* friends;
+        int* friends;
+        struct nodes nodes;
+        if ((nodes.array = attach_shm_memory(shm_nodes_array_id)) == NULL) {
+          fprintf(ERR_FILE, "u%d: cannot attach users shared memory\n", getpid());
+          exit(EXIT_FAILURE);
+        }
+        if ((nodes.size = attach_shm_memory(shm_nodes_array_id)) == NULL) {
+          fprintf(ERR_FILE, "u%d: cannot attach users shared memory\n", getpid());
+          exit(EXIT_FAILURE);
+        }
         close(file_descriptors[1]);
-        friends = assign_friends(nodes);
+        friends = assign_friends(nodes.array, *nodes.size);
 
         init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
         break;
       }
       default:
       {
-        pid_t* lista_nodi = init_list(SO_NUM_FRIENDS);
+        int* lista_nodi = init_list(SO_NUM_FRIENDS);
         i = 0;
         close(file_descriptors[0]);
         while (i < SO_NUM_FRIENDS) {
-          pid_t node_random = random_element(nodes.array, *nodes.size);
+          int node_random = random_element(nodes.array, *nodes.size);
           if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
             lista_nodi[i++] = node_random;
-            write(file_descriptors[1], &child, sizeof(pid_t));
+            write(file_descriptors[1], &child, sizeof(int));
             kill(node_random, SIGUSR2);
           }
         }
-
         nodes_write_fd[*nodes.size] = file_descriptors[1];
         break;
       }
@@ -369,13 +387,21 @@ int main() {
   transaction** registry;
   int* size_nodes;
   int* size_book;
+  int i;
   bzero(&stats, sizeof(struct msqid_ds));
   if ((nodes_write_fd = init_list(SO_NODES_NUM)) == NULL) {
     fprintf(ERR_FILE, "master: cannot allocate memory for nodes_write_fd.\n");
     exit(EXIT_FAILURE);
   }
+  if ((node_budget = init_list(SO_NODES_NUM * 2)) == NULL) {
+    fprintf(ERR_FILE, "master: cannot allocate memory for node_budget.\n");
+    exit(EXIT_FAILURE);
+  }
+  if ((user_budget = init_list(SO_USERS_NUM)) == NULL) {
+    fprintf(ERR_FILE, "master: cannot allocate memory for user_budget.\n");
+    exit(EXIT_FAILURE);
+  }
 
-  users = init_list(SO_USERS_NUM);
   load_constants();
 
   fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
@@ -386,34 +412,9 @@ int main() {
   act.sa_flags = 0;
   act.sa_mask = mask;
 
-  /* Handling segnali SIGALRM, SIGINT, SIGUSR1 */
-  if (sigaction(SIGALRM, &act, NULL) < 0) {
-    fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
-    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
-    exit(EXIT_FAILURE);
-  }
-  if (sigaction(SIGINT, &act, NULL) < 0) {
-    fprintf(ERR_FILE, "master: could not associate handler to SIGTERM.\n");
-    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
-    exit(EXIT_FAILURE);
-  }
-  if (sigaction(SIGUSR1, &act, NULL) < 0) {
-    fprintf(ERR_FILE, "master: could not associate handler to SIGTERM.\n");
-    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
-    exit(EXIT_FAILURE);
-  }
-  /* Fine handling segnali */
-
   /* Inizializzazione semafori start sincronizzato e write del libro mastro */
   if ((sem_id = semget(getpid(), NUM_SEM, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
     fprintf(ERR_FILE, "master: semaphore %d already exists.\n", getpid());
-    free_list(users);
-    exit(EXIT_FAILURE);
-  }
-
-  if (semctl(sem_id, ID_READY, SETVAL, NUM_PROC) == -1) {
-    fprintf(ERR_FILE, "master: cannot set initial value for sem ID_READY with id %d.\n", sem_id);
-    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
     exit(EXIT_FAILURE);
   }
 
@@ -489,7 +490,7 @@ int main() {
     master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
     exit(EXIT_FAILURE);
   }
-  if ((size_book = attach_shm_memory(shm_nodes_size_id)) == NULL) {
+  if ((size_nodes = attach_shm_memory(shm_nodes_size_id)) == NULL) {
     fprintf(ERR_FILE, "master: the process cannot be attached to the shared memory.\n");
     master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
     exit(EXIT_FAILURE);
@@ -499,6 +500,22 @@ int main() {
   /* Fine inizializzazione shm  per size dei nodi */
   nodes.array = nodes_array;
   nodes.size = size_nodes;
+
+  /* Inizializzazione shm users array */
+  if ((shm_users_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_USERS_NUM)) == -1) {
+    if (errno == EEXIST)
+      fprintf(ERR_FILE, "master: cannot start shared memory. Please clear the shm with key %d\n", SHM_NODES_ID);
+    else if (errno == ENOSPC)
+      fprintf(ERR_FILE, "master: cannot start shared memory because all ids were taken. clear some ipcs\n");
+    master_cleanup(users, nodes, shm_users_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
+  }
+  if ((users = attach_shm_memory(shm_users_array_id)) == NULL) {
+    fprintf(ERR_FILE, "master: the process cannot be attached to the shared memory.\n");
+    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
+  }
+  /* Fine inizializzazione shm users array */
 
   /* Inizializzazione coda di messaggi master-nodi */
   if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
@@ -519,78 +536,129 @@ int main() {
   }
   /*  Fine inizializzazione coda di messaggi master-nodi  */
 
-  {
-    int i = 0;
-    while (i < SO_USERS_NUM) {
-      pid_t child;
-
-      switch ((child = fork())) {
-      case -1:
-        fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
-        master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
-        exit(EXIT_FAILURE);
-      case 0:
-      {
-        init_user(users, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id);
-        break;
-      }
-      default:
-        users[i++] = child;
-        break;
-      }
-    }
-
-    i = 0;
-    while (i < SO_NODES_NUM) {
-      int fd[2];
-      pid_t child;
-      if (pipe(fd) == -1) {
-        fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
-        master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
-      }
-      switch ((child = fork())) {
-      case -1:
-        fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
-        master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
-        exit(EXIT_FAILURE);
-      case 0:
-      {
-        pid_t* friends;
-        close(fd[1]);
-        /* TODO: gestire assegnazione degli amici */
-        if ((friends = assign_friends(nodes)) == NULL) {
-          fprintf(ERR_FILE, "master: cannot assign friends to node %d\n", getpid());
-          exit(EXIT_FAILURE);
-        }
-        init_node(friends, fd[0], shm_book_id, shm_book_size_id);
-        break;
-      }
-      default:
-        close(fd[0]);
-        nodes_write_fd[i] = fd[1];
-        nodes.array[i] = child;
-        i++;
-        break;
-      }
-    }
+  if (semctl(sem_id, ID_READY, SETVAL, SO_NODES_NUM + 1) == -1) {
+    fprintf(ERR_FILE, "master: cannot set initial value for sem ID_READY with id %d.\n", sem_id);
+    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
   }
 
-  /* master gives "green light" to all child processes */
+  i = 0;
+  while (i < SO_NODES_NUM) {
+    int fd[2];
+    int child;
+    if (pipe(fd) == -1) {
+      fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
+      master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    }
+    switch ((child = fork())) {
+    case -1:
+      fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
+      master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+      exit(EXIT_FAILURE);
+    case 0:
+    {
+      int* friends;
+      int* nodes_arr;
+      if ((nodes_arr = attach_shm_memory(shm_nodes_array_id)) == NULL) {
+        fprintf(ERR_FILE, "u%d: cannot attach nodes shared memory\n", getpid());
+        exit(EXIT_FAILURE);
+      }
+      close(fd[1]);
+
+      wait_siblings();
+      if ((friends = assign_friends(nodes_arr, SO_NODES_NUM)) == NULL) {
+        fprintf(ERR_FILE, "master: cannot assign friends to node %d\n", getpid());
+        exit(EXIT_FAILURE);
+      }
+      init_node(friends, fd[0], shm_book_id, shm_book_size_id);
+      break;
+    }
+    default:
+      close(fd[0]);
+      nodes_write_fd[i] = fd[1];
+      nodes.array[i] = child;
+      i++;
+      break;
+    }
+  }
   sops.sem_num = ID_READY;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
-  fprintf(LOG_FILE, "GREEN LIGHT\n");
+  fprintf(LOG_FILE, "GREEN LIGHT PER I NODI\n");
   /*test per debug*/
   sops.sem_num = ID_READY;
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 
+  if (semctl(sem_id, ID_READY, SETVAL, SO_USERS_NUM + 1) == -1) {
+    fprintf(ERR_FILE, "master: cannot set initial value for sem ID_READY with id %d.\n", sem_id);
+    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
+  }
+
+  i = 0;
+  while (i < SO_USERS_NUM) {
+    int child;
+
+    switch ((child = fork())) {
+    case -1:
+      fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
+      master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+      exit(EXIT_FAILURE);
+    case 0:
+    {
+      int* users;
+      if ((users = attach_shm_memory(shm_users_array_id)) == NULL) {
+        fprintf(ERR_FILE, "u%d: cannot attach users shared memory\n", getpid());
+        exit(EXIT_FAILURE);
+      }
+      wait_siblings();
+      init_user(users, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id);
+      break;
+    }
+    default:
+      users[i++] = child;
+      break;
+    }
+  }
+
+  sops.sem_num = ID_READY;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  fprintf(LOG_FILE, "GREEN LIGHT PER GLI USER\n");
+  /*test per debug*/
+  sops.sem_num = ID_READY;
+  sops.sem_op = 0;
+  semop(sem_id, &sops, 1);
+
+
+  /* Handling segnali SIGALRM, SIGINT, SIGUSR1 */
+  if (sigaction(SIGALRM, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
+    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGINT, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGINT.\n");
+    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGUSR1, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
+    master_cleanup(users, nodes, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id, sem_id, queue_id);
+    exit(EXIT_FAILURE);
+  }
+  /* Fine handling segnali */
+
+  fprintf(LOG_FILE, "master: inizio il ciclo principale\n");
   {
     int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM);
     int ending_reason;
 
     int i = 0;
+    alarm(1);
     while (!stop_sim && simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
@@ -623,7 +691,7 @@ int main() {
       }
     }
     alarm(0);
-    stop_simulation(users, nodes);
+    stop_simulation();
 
     while (1) {
       int status;
@@ -669,9 +737,6 @@ int main() {
     summary_print(ending_reason, users, user_budget, nodes.array, node_budget, nof_transactions);
     free(nof_transactions);
   }
-
-  free_list(users);
-  free_list(nodes.array);
 
   if (shmctl(shm_book_id, IPC_RMID, NULL) == -1) {
     fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_book_id);

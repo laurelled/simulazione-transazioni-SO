@@ -161,6 +161,7 @@ static void generate()
   /* signal handling init */
   bzero(&mask, sizeof(sigset_t));
   sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
   act.sa_handler = sig_handler;
   act.sa_flags = SA_NODEFER;
   act.sa_mask = mask;
@@ -253,26 +254,20 @@ void simulate_processing(transaction* block, struct master_book book, int sem_id
 
 void init_node(int* friends, int pipe_read, int shm_book_id, int shm_book_size_id)
 {
-  struct sembuf sops;
   int sem_id;
   struct master_book book;
 
   friends = friends;
   nof_friends = SO_NUM_FRIENDS;
 
+  fprintf(LOG_FILE, "Node PID: %d\n", getpid());
+  generate();
+
   if ((sem_id = semget(getppid(), 0, 0)) == -1) {
     fprintf(ERR_FILE, "node n%d: err\n", getpid());
     exit(EXIT_FAILURE);
   }
 
-  fprintf(LOG_FILE, "Node PID: %d\n", getpid());
-  generate();
-
-  if (sem_id = semget(getppid(), 1, S_IRUSR | S_IWUSR) == -1) {
-    fprintf(ERR_FILE, "node: cannot retrieve sem_id from master");
-    node_cleanup();
-    exit(EXIT_FAILURE);
-  }
 
   if ((book.blocks = attach_shm_memory(shm_book_id)) == NULL) {
     fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
@@ -285,14 +280,6 @@ void init_node(int* friends, int pipe_read, int shm_book_id, int shm_book_size_i
     node_cleanup();
     exit(EXIT_FAILURE);
   }
-
-  sops.sem_num = 0;
-  sops.sem_op = -1;
-  semop(sem_id, &sops, 1);
-
-  fprintf(LOG_FILE, "n%d: waiting for green light.\n", getpid());
-  sops.sem_op = 0;
-  semop(sem_id, &sops, 1);
 
   while (1)
   {
