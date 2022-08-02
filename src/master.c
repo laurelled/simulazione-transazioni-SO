@@ -297,13 +297,9 @@ void handler(int signal) {
     }
     int new_node_msg_id;
     int i = 0;
-    if (semctl(sem_id, ID_READY, SETVAL, 2) == -1) {
-      fprintf(ERR_FILE, "master: cannot set initial value for sem ID_READY with id %d.\n", sem_id);
-      /*TODO: cleanup(users, nodes, shm_id, sem_id, queue_id); classico dubbio dei parametri*/
-      exit(EXIT_FAILURE);
-    }
+
     sops.sem_num = sem_id;
-    sops.sem_op = -1;
+    sops.sem_op = 1;
     semop(sem_id, &sops, 1);
 
     sops.sem_op = 0;
