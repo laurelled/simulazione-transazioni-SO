@@ -8,7 +8,7 @@ INCLUDES = src/**/*.h
 
 COMMON_DEPS = $(INCLUDES) Makefile
 
-exe: build/*.o ${COMMON_DEPS}
+exe: master ${COMMON_DEPS}
 	${CC} build/*.o -o run.out
 
 master: src/master.c node user master_book utils pid_list load_constants ${COMMON_DEPS}

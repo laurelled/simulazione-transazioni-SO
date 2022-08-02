@@ -44,6 +44,7 @@ int random_element(pid_t* list, int size) {
   In questo modo riduce il sottoarray da cui cercare i processi attivi */
   do {
     int r_index = 0;
+    srand(clock());
     found = 1; /* imposto found a true */
     r_index = (rand() % size);
     random_el = cpy[r_index];

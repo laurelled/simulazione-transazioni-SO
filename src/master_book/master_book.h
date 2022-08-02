@@ -13,7 +13,7 @@ typedef struct
 } transaction;
 
 struct master_book {
-  unsigned int cursor;
+  int* size;
   transaction** blocks;
 };
 

@@ -66,8 +66,8 @@ static void sig_handler(int sig) {
         int chosen_friend;
         struct msg incoming;
         transaction t;
-        /* TODO può essere la transactio t l'errore? non viene settato a niente*/
         msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
+        t = incoming.transaction;
         /*gestione invio transazione al master se hops raggiunti */
         if (incoming.hops == SO_HOPS) {
           int master_q;
@@ -76,7 +76,7 @@ static void sig_handler(int sig) {
             node_cleanup();
             exit(EXIT_FAILURE);
           }
-          if (msgsnd(master_q, &incoming.transaction, sizeof(transaction), IPC_NOWAIT) == -1) {
+          if (msgsnd(master_q, &t, sizeof(transaction), IPC_NOWAIT) == -1) {
             if (errno != EAGAIN) {
               fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             }
@@ -98,7 +98,6 @@ static void sig_handler(int sig) {
         }
         /* accetta la transazione nella sua transaction pool*/
         else {
-          t = incoming.transaction;
           kill(t.sender, ACCEPT_TRANSACTION);
           transaction_pool[nof_transaction++] = t;
         }
@@ -183,6 +182,8 @@ static void generate()
     node_cleanup();
     exit(EXIT_FAILURE);
   }
+  /*
+  TODO: controllare che si possa settare dinamicamente MSGMNB
   if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
     fprintf(ERR_FILE, "init_node: cannot access msgqueue stats. errno was %s.\n", strerror(errno));
     node_cleanup();
@@ -194,6 +195,7 @@ static void generate()
     node_cleanup();
     exit(EXIT_FAILURE);
   }
+  */
 }
 
 static void get_out_of_the_pool()
@@ -229,50 +231,32 @@ static transaction* extract_block()
   return block;
 }
 
-void simulate_processing(transaction* block) {
-
-  struct master_book* book;
+void simulate_processing(transaction* block, struct master_book book, int sem_id) {
   struct sembuf sops;
-  int sem_id;
-  int shm_id;
   sigset_t mask;
 
 
-  if (sem_id = semget(getppid(), 1, S_IRUSR | S_IWUSR) == -1) {
-    fprintf(ERR_FILE, "node: cannot retrieve sem_id from master");
-    node_cleanup();
-    exit(EXIT_FAILURE);
-  }
-
-  if (shm_id == shmget(getppid(), 0, 0) == -1) {
-    fprintf(ERR_FILE, "node: cannot retrieve shm_id from master");
-    node_cleanup();
-    exit(EXIT_FAILURE);
-  }
-
-  if ((book = attach_shm_memory(shm_id)) == NULL) {
-    fprintf(ERR_FILE, "node: the process cannot be attached to the shared memory.\n");
-    node_cleanup();
-    exit(EXIT_FAILURE);
-  }
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
   sops.sem_num = 1;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
-  book->blocks[book->cursor] = block;
-  book->cursor++;
+  book.blocks[*book.size] = block;
+  (*book.size)++;
 
-  get_out_of_the_pool();
   sops.sem_num = 1;
   sops.sem_op = 1;
   semop(sem_id, &sops, 1);
+
+  get_out_of_the_pool();
 }
 
-void init_node(pid_t* friends, int pipe_read)
+void init_node(int* friends, int pipe_read, int shm_book_id, int shm_book_size_id)
 {
   struct sembuf sops;
   int sem_id;
+  struct master_book book;
+
   friends = friends;
   nof_friends = SO_NUM_FRIENDS;
 
@@ -283,6 +267,24 @@ void init_node(pid_t* friends, int pipe_read)
 
   fprintf(LOG_FILE, "Node PID: %d\n", getpid());
   generate();
+
+  if (sem_id = semget(getppid(), 1, S_IRUSR | S_IWUSR) == -1) {
+    fprintf(ERR_FILE, "node: cannot retrieve sem_id from master");
+    node_cleanup();
+    exit(EXIT_FAILURE);
+  }
+
+  if ((book.blocks = attach_shm_memory(shm_book_id)) == NULL) {
+    fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
+    node_cleanup();
+    exit(EXIT_FAILURE);
+  }
+
+  if ((book.size = attach_shm_memory(shm_book_size_id)) == NULL) {
+    fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
+    node_cleanup();
+    exit(EXIT_FAILURE);
+  }
 
   sops.sem_num = 0;
   sops.sem_op = -1;
@@ -301,7 +303,7 @@ void init_node(pid_t* friends, int pipe_read)
     }
     alarm(3);
     block = extract_block();
-    simulate_processing(block);
+    simulate_processing(block, book, sem_id);
 
     free(block);
   }

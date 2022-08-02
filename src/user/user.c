@@ -15,6 +15,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <errno.h>
+#include <time.h>
 #include <string.h>
 #include <strings.h>
 
@@ -30,16 +31,20 @@ extern int SO_MAX_TRANS_GEN_NSEC;
 static int cont_try = 0;
 
 void usr_handler(int);
-int calcola_bilancio(int, struct master_book*, int*);
+int calcola_bilancio(int, struct master_book, int*);
 
-void init_user(pid_t* users)
+void init_user(pid_t* users, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
 {
   int sem_id;
-  int shm_id;
-  int shm_nodes;
 
-  struct nodes* nodes;
-  struct master_book* book;
+  int* nodes_array;
+  transaction** registry;
+  int* size_nodes;
+  int* size_book;
+
+  struct nodes nodes;
+  struct master_book book;
+
   struct sembuf sops;
   int bilancio_corrente = SO_BUDGET_INIT;
   int block_reached;
@@ -63,24 +68,30 @@ void init_user(pid_t* users)
     fprintf(ERR_FILE, "user u%d: err\n", getpid());
     exit(EXIT_FAILURE);
   }
-  if ((shm_id = shmget(getppid(), 0, 0)) == -1) {
-    fprintf(ERR_FILE, "user: cannot retrieve shm_id\n");
+
+  if ((nodes_array = attach_shm_memory(shm_nodes_array)) == NULL) {
+    fprintf(ERR_FILE, "user u%d: the process cannot be attached to the nodes array shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
-  if ((shm_nodes = shmget(SHM_NODES_ID, 0, 0)) == -1) {
-    fprintf(ERR_FILE, "user: cannot retrieve shm_nodes\n");
+  if ((size_nodes = attach_shm_memory(shm_nodes_size)) == NULL) {
+    fprintf(ERR_FILE, "user u%d: the process cannot be attached to the nodes size shared memory.\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+  if ((registry = attach_shm_memory(shm_book_id)) == NULL) {
+    fprintf(ERR_FILE, "user u%d: the process cannot be attached to the registry shared memory.\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+  if ((size_book = attach_shm_memory(shm_book_size_id)) == NULL) {
+    fprintf(ERR_FILE, "user u%d: the process cannot be attached to the book size shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
 
-  if ((nodes = attach_shm_memory(shm_nodes)) == NULL) {
-    fprintf(ERR_FILE, "user u%d: the process cannot be attached to the nodes shared memory.\n", getpid());
-    exit(EXIT_FAILURE);
-  }
 
-  if ((book = attach_shm_memory(shm_id)) == NULL) {
-    fprintf(ERR_FILE, "user: the process cannot be attached to the master book shared memory.\n");
-    exit(EXIT_FAILURE);
-  }
+
+  nodes.size = size_nodes;
+  nodes.array = nodes_array;
+  book.size = size_book;
+  book.blocks = registry;
 
 
   sops.sem_num = 0;
@@ -99,12 +110,11 @@ void init_user(pid_t* users)
       /* estrazione di un destinatario casuale*/
       int random_user = random_element(users, SO_USERS_NUM);
       /* estrazione di un nodo casuale*/
-      int random_node = random_element(nodes->array, nodes->size);
+      int random_node = random_element(nodes.array, *nodes.size);
       int cifra_utente;
       int num;
       int reward;
-      struct msg transaction;
-
+      struct msg message;
       if (random_user == -1) {
         fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
         exit(EXIT_SUCCESS);
@@ -124,24 +134,39 @@ void init_user(pid_t* users)
 
       /* system V message queue */
       /* ricerca della coda di messaggi del nodo random */
-      if ((queue_id = msgget(random_node, S_IWUSR)) == -1) {
+      if ((queue_id = msgget(random_node, S_IWUSR | S_IRUSR)) == -1) {
         fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
         exit(EXIT_FAILURE);
       }
+      fprintf(LOG_FILE, "queue id: %d\n", queue_id);
       /* creazione di una transazione e invio di tale al nodo generato*/
       t = malloc(sizeof(transaction));
       new_transaction(t, getpid(), random_user, cifra_utente, reward);
 
 
-      transaction.hops = 0;
-      transaction.transaction = *t;
-      if (msgsnd(queue_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
-        if (errno != EAGAIN) {
+      message.hops = 0;
+      message.transaction = *t;
+      if (msgsnd(queue_id, &message, sizeof(struct msg), IPC_NOWAIT) == -1) {
+        /*if (errno != EAGAIN) {
           fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
-          if (errno == EACCES) {
-            fprintf(ERR_FILE, "init_user u%d: permission missing\n", getpid());
-          }
+        }*/
+        switch (errno) {
+        case EAGAIN:
+          fprintf(LOG_FILE, "Top amo ce l'hai fatta\n");
+          break;
+        case EINVAL:
+          fprintf(LOG_FILE, "msg queue id invalida\n");
+          break;
+        case EIDRM:
+          fprintf(LOG_FILE, "come cazzo è successo\n");
+          break;
+        case EFAULT:
+          fprintf(LOG_FILE, "wtf non è valido il messaggio\n");
+          break;
+        default:
+          fprintf(LOG_FILE, "broski ma che cazzo di errore è %s", strerror(errno));
         }
+
         cont_try++;
       }
       else {
@@ -160,12 +185,12 @@ void init_user(pid_t* users)
   exit(EARLY_FAILURE);
 }
 
-int calcola_bilancio(int bilancio, struct master_book* book, int* block_reached)
+int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 {
   int i = *block_reached;
-  unsigned int size = book->cursor;
+  unsigned int size = *book.size;
   while (i < size) {
-    transaction* ptr = book->blocks[i++];
+    transaction* ptr = book.blocks[i++];
     int j = 0;
     while (j++ < SO_BLOCK_SIZE - 1) {
       if (ptr->receiver == getpid()) {
@@ -193,6 +218,11 @@ void usr_handler(int signal) {
     fprintf(LOG_FILE, "%s user %d: transaction was accepted, resetting cont_try.\n", asctime(timeinfo), getpid());
     cont_try = 0;
     break;
+  }
+  case SIGUSR2:
+  {
+    fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", SO_RETRY - cont_try);
+    cont_try++;
   }
   case SIGTERM:
     fprintf(LOG_FILE, "u%d: killed by parent. Ending successfully\n", getpid());
