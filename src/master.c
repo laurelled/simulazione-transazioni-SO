@@ -156,7 +156,7 @@ int  start_shared_memory(int key, size_t size) {
 
 void periodical_print(int* users, int* user_budget, int* node_budget) {
   int i = 0;
-  fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d", SO_USERS_NUM - inactive_users, SO_NODES_NUM);
+  fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d\n", SO_USERS_NUM - inactive_users, SO_NODES_NUM);
   /* budget di ogni processo utente (inclusi quelli terminati prematuramente)*/
   fprintf(LOG_FILE, "USERS BUDGETS\n");
   if (SO_USERS_NUM < MAX_USERS_TO_PRINT) {
@@ -167,7 +167,7 @@ void periodical_print(int* users, int* user_budget, int* node_budget) {
   else {
     int min_i = 0;
     int max_i = 0;
-    fprintf(LOG_FILE, "[!] Users count is too high to display all budgets [!]");
+    fprintf(LOG_FILE, "[!] Users count is too high to display all budgets [!]\n");
     i = 1;
     while (i < SO_NODES_NUM) {
       if (user_budget[i] < user_budget[min_i]) {
@@ -179,8 +179,8 @@ void periodical_print(int* users, int* user_budget, int* node_budget) {
       i++;
     }
 
-    fprintf(LOG_FILE, "HIGHEST BUDGET: USER u%d : %d$", users[max_i], user_budget[max_i]);
-    fprintf(LOG_FILE, "LOWEST BUDGET: USER u%d : %d$", users[min_i], user_budget[min_i]);
+    fprintf(LOG_FILE, "HIGHEST BUDGET: USER u%d : %d$\n", users[max_i], user_budget[max_i]);
+    fprintf(LOG_FILE, "LOWEST BUDGET: USER u%d : %d$\n", users[min_i], user_budget[min_i]);
   }
   /* budget di ogni processo nodo */
   i = 0;
