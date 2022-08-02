@@ -38,7 +38,7 @@ static transaction* transaction_pool;
 static int nof_transaction;
 
 
-void cleanup() {
+void node_cleanup() {
   free(transaction_pool);
   msgctl(queue_id, IPC_RMID, NULL);
 }
@@ -47,14 +47,15 @@ static void sig_handler(int sig) {
   struct msqid_ds stats;
   switch (sig) {
   case SIGTERM:
-    cleanup();
+    node_cleanup();
+    fprintf(LOG_FILE, "n%d: killed by parent. Ending successfully\n", getpid());
     exit(nof_transaction);
   case SIGUSR1:
   {
     int msg_num;
     if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
       fprintf(ERR_FILE, "sig_handler: reading error of IPC_STAT. Check user permission.\n");
-      cleanup();
+      node_cleanup();
       exit(EXIT_FAILURE);
     }
     msg_num = stats.msg_qnum;
@@ -65,24 +66,24 @@ static void sig_handler(int sig) {
         int chosen_friend;
         struct msg incoming;
         transaction t;
-
+        /* TODO può essere la transactio t l'errore? non viene settato a niente*/
         msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
         /*gestione invio transazione al master se hops raggiunti */
         if (incoming.hops == SO_HOPS) {
           int master_q;
-          if ((master_q = msgget(getppid(), 0)) == -1) {
+          if ((master_q = msgget(getppid(), S_IWUSR)) == -1) {
             fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
-            cleanup();
+            node_cleanup();
             exit(EXIT_FAILURE);
           }
-          if (msgsnd(master_q, &t, sizeof(transaction), IPC_NOWAIT) == -1) {
+          if (msgsnd(master_q, &incoming.transaction, sizeof(transaction), IPC_NOWAIT) == -1) {
             if (errno != EAGAIN) {
               fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             }
+            fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid());
           }
           kill(getppid(), SIGUSR1);
         }
-        /*fine gestione hops raggiunti */
         /*gestione transaction_pool piena */
         else if (nof_transaction == SO_TP_SIZE) {
           chosen_friend = random_element(friends, SO_NUM_FRIENDS);
@@ -95,7 +96,7 @@ static void sig_handler(int sig) {
 
           kill(chosen_friend, SIGUSR1);
         }
-        /*fine gestione transaction_pool*/
+        /* accetta la transazione nella sua transaction pool*/
         else {
           t = incoming.transaction;
           kill(t.sender, ACCEPT_TRANSACTION);
@@ -167,30 +168,30 @@ static void generate()
 
   if (sigaction(SIGUSR1, &act, NULL) < 0) {
     fprintf(ERR_FILE, "init_node: could not associate handler to SIGUSR1.\n");
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
   if (sigaction(SIGTERM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "init_node: could not associate handler to SIGTERM.\n");
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
 
   /* system V message queue */
   if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IWUSR | S_IRUSR)) < 0) {
     fprintf(ERR_FILE, "init_node: message queue already exists. Check ipcs and remove it with iprm -Q %d.\n", getpid());
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
   if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
-    fprintf(ERR_FILE, "init_node: cannot read msgqueue stats. Check user permission.\n");
-    cleanup();
+    fprintf(ERR_FILE, "init_node: cannot access msgqueue stats. errno was %s.\n", strerror(errno));
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
-  stats.msg_qbytes = sizeof(struct msg) * (long unsigned int) SO_TP_SIZE;
+  stats.msg_qbytes = sizeof(struct msg) * SO_TP_SIZE;
   if (msgctl(queue_id, IPC_SET, &stats) < 0) {
-    fprintf(ERR_FILE, "init_node: cannot write msgqueue stats. Check user permission.\n");
-    cleanup();
+    fprintf(ERR_FILE, "init_node: cannot write msgqueue stats. errno was %s.\n", strerror(errno));
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
 }
@@ -212,7 +213,7 @@ static transaction* extract_block()
   transaction* block = calloc(SO_BLOCK_SIZE, sizeof(transaction));
   if (block == NULL) {
     fprintf(ERR_FILE, "extract_block: cannot allocate memory for a new transaction block. Check memory usage\n");
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
   while (i < SO_BLOCK_SIZE - 1)
@@ -239,19 +240,19 @@ void simulate_processing(transaction* block) {
 
   if (sem_id = semget(getppid(), 1, S_IRUSR | S_IWUSR) == -1) {
     fprintf(ERR_FILE, "node: cannot retrieve sem_id from master");
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
 
   if (shm_id == shmget(getppid(), 0, 0) == -1) {
     fprintf(ERR_FILE, "node: cannot retrieve shm_id from master");
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
 
-  if ((book = get_master_book(shm_id)) == NULL) {
+  if ((book = attach_shm_memory(shm_id)) == NULL) {
     fprintf(ERR_FILE, "node: the process cannot be attached to the shared memory.\n");
-    cleanup();
+    node_cleanup();
     exit(EXIT_FAILURE);
   }
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
@@ -262,17 +263,16 @@ void simulate_processing(transaction* block) {
   book->blocks[book->cursor] = block;
   book->cursor++;
 
+  get_out_of_the_pool();
   sops.sem_num = 1;
   sops.sem_op = 1;
   semop(sem_id, &sops, 1);
-  get_out_of_the_pool();
 }
 
 void init_node(pid_t* friends, int pipe_read)
 {
   struct sembuf sops;
   int sem_id;
-  pid_t* friends;
   friends = friends;
   nof_friends = SO_NUM_FRIENDS;
 
@@ -288,6 +288,7 @@ void init_node(pid_t* friends, int pipe_read)
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
+  fprintf(LOG_FILE, "n%d: waiting for green light.\n", getpid());
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 
