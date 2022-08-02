@@ -1,5 +1,6 @@
 #ifndef _UTILS_H_
 #define _UTILS_H_
+#define _POSIX_SOURCE
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
