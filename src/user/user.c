@@ -1,8 +1,11 @@
+#include "../utils/utils.h"
 #include "../master_book/master_book.h"
 #include "user.h"
-#include "../utils/utils.h"
 #include "../pid_list/pid_list.h"
+#include "../master.h"
 
+#include <signal.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -10,12 +13,10 @@
 #include <sys/msg.h>
 #include <sys/stat.h>
 #include <sys/shm.h>
-#include<sys/sem.h>
+#include <sys/sem.h>
 #include <errno.h>
 #include <string.h>
 #include <strings.h>
-#include <signal.h>
-#include <stdlib.h>
 
 /*Variabili statici per ogni processo utente*/
 extern int SO_BUDGET_INIT;
@@ -27,54 +28,68 @@ extern int SO_MIN_TRANS_GEN_NSEC;
 extern int SO_MAX_TRANS_GEN_NSEC;
 
 static int cont_try = 0;
-static int nof_nodes;
 
-void handler(int);
+void usr_handler(int);
 int calcola_bilancio(int, struct master_book*, int*);
 
-void init_user(int* users, int* nodes)
+void init_user(pid_t* users)
 {
+  int sem_id;
+  int shm_id;
+  int shm_nodes;
+
+  struct nodes* nodes;
   struct master_book* book;
   struct sembuf sops;
-  int sem_id;
   int bilancio_corrente = SO_BUDGET_INIT;
   int block_reached;
   struct sigaction sa;
-  int shm_id;
-  int shm_node;
   int queue_id;
   sigset_t mask;
-  nof_nodes = SO_NODES_NUM;
   sigemptyset(&mask);
   sa.sa_flags = 0;
   sa.sa_mask = mask;
-  sa.sa_handler = handler;
-  sigaction(SIGUSR1, &sa, NULL);
+  sa.sa_handler = usr_handler;
+  if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+    fprintf(ERR_FILE, "user u%d: cannot associate handler to SIGUSR1\n", getpid());
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGTERM, &sa, NULL) == -1) {
+    fprintf(ERR_FILE, "user u%d: cannot associate handler to SIGTERM\n", getpid());
+    exit(EXIT_FAILURE);
+  }
 
   if ((sem_id = semget(getppid(), 0, 0)) == -1) {
-    fprintf(ERR_FILE, "user n%d: err\n", getpid());
+    fprintf(ERR_FILE, "user u%d: err\n", getpid());
     exit(EXIT_FAILURE);
   }
-  if (shm_id = shmget(getppid(), 0, 0) == -1) {
-    fprintf(ERR_FILE, "user: cannot retrieve shm_id from master");
+  if ((shm_id = shmget(getppid(), 0, 0)) == -1) {
+    fprintf(ERR_FILE, "user: cannot retrieve shm_id\n");
     exit(EXIT_FAILURE);
   }
-  if (shm_node = shmget(getppid(), 0, 0) == -1) {
-    fprintf(ERR_FILE, "user: cannot retrieve shm_id from master");
+  if ((shm_nodes = shmget(SHM_NODES_ID, 0, 0)) == -1) {
+    fprintf(ERR_FILE, "user: cannot retrieve shm_nodes\n");
     exit(EXIT_FAILURE);
   }
-  if ((book = get_master_book(shm_id)) == NULL) {
-    fprintf(ERR_FILE, "user: the process cannot be attached to the shared memory.\n");
+
+  if ((nodes = attach_shm_memory(shm_nodes)) == NULL) {
+    fprintf(ERR_FILE, "user u%d: the process cannot be attached to the nodes shared memory.\n", getpid());
     exit(EXIT_FAILURE);
   }
-  /*da chiedere non ricordo cosa si dovesse implementare in user per i semafori*/
+
+  if ((book = attach_shm_memory(shm_id)) == NULL) {
+    fprintf(ERR_FILE, "user: the process cannot be attached to the master book shared memory.\n");
+    exit(EXIT_FAILURE);
+  }
+
+
   sops.sem_num = 0;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
+  fprintf(LOG_FILE, "u%d: waiting for green light.\n", getpid());
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
-  /*fine dubbio*/
 
 
   while (cont_try < SO_RETRY)
@@ -84,7 +99,7 @@ void init_user(int* users, int* nodes)
       /* estrazione di un destinatario casuale*/
       int random_user = random_element(users, SO_USERS_NUM);
       /* estrazione di un nodo casuale*/
-      int random_node = random_element(&shm_node, nof_nodes);
+      int random_node = random_element(nodes->array, nodes->size);
       int cifra_utente;
       int num;
       int reward;
@@ -109,7 +124,7 @@ void init_user(int* users, int* nodes)
 
       /* system V message queue */
       /* ricerca della coda di messaggi del nodo random */
-      if ((queue_id = msgget(random_node, 0)) == -1) {
+      if ((queue_id = msgget(random_node, S_IWUSR)) == -1) {
         fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
         exit(EXIT_FAILURE);
       }
@@ -118,11 +133,14 @@ void init_user(int* users, int* nodes)
       new_transaction(t, getpid(), random_user, cifra_utente, reward);
 
 
-      transaction.hops = cont_try;
+      transaction.hops = 0;
       transaction.transaction = *t;
       if (msgsnd(queue_id, &transaction, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
           fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
+          if (errno == EACCES) {
+            fprintf(ERR_FILE, "init_user u%d: permission missing\n", getpid());
+          }
         }
         cont_try++;
       }
@@ -163,17 +181,22 @@ int calcola_bilancio(int bilancio, struct master_book* book, int* block_reached)
   return bilancio;
 }
 
-void handler(int signal) {
+void usr_handler(int signal) {
   switch (signal) {
   case SIGUSR1:
-    fprintf(LOG_FILE, "user %d: transaction was accepted, resetting cont_try.\n", getpid());
+  {
+    time_t rawtime;
+    struct tm* timeinfo;
+
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+    fprintf(LOG_FILE, "%s user %d: transaction was accepted, resetting cont_try.\n", asctime(timeinfo), getpid());
     cont_try = 0;
     break;
+  }
   case SIGTERM:
+    fprintf(LOG_FILE, "u%d: killed by parent. Ending successfully\n", getpid());
     exit(EXIT_SUCCESS);
-    break;
-  case SIGUSR2:
-    nof_nodes++;
     break;
   default:
     fprintf(ERR_FILE, "user %d: an unexpected signal was recieved.\n", getpid());
