@@ -1,6 +1,6 @@
 CC = gcc
 
-all: master
+all: exe
 
 CFLAGS = -g -std=c89 -pedantic
 
