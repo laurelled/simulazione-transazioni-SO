@@ -1,5 +1,6 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
+#include "../master/master.h"
 #include "../pid_list/pid_list.h"
 
 #include <sys/time.h>
@@ -31,7 +32,7 @@ extern int SO_HOPS;
 static int queue_id;
 static int pipe_read;
 
-static pid_t* friends;
+static int* friends;
 static int nof_friends;
 
 static transaction* transaction_pool;
@@ -62,7 +63,6 @@ static void sig_handler(int sig) {
     msg_num = stats.msg_qnum;
     /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
-      fprintf(LOG_FILE, "n%d: msg_num = %d\n", getpid(), msg_num + 1);
       int chosen_friend;
       struct msg incoming;
       transaction t;
@@ -74,7 +74,8 @@ static void sig_handler(int sig) {
         }
       }
       t = incoming.transaction;
-      /*gestione invio transazione al master se hops raggiunti */
+      fprintf(LOG_FILE, "hops: %d/%d ", incoming.hops, SO_HOPS);
+      /*gestione invio transazione al master se SO_HOPS raggiunti */
       if (incoming.hops == SO_HOPS) {
         int master_q;
         if ((master_q = msgget(getppid(), S_IWUSR)) == -1) {
@@ -95,9 +96,19 @@ static void sig_handler(int sig) {
       }
       /*gestione transaction_pool piena */
       else if (nof_transaction == SO_TP_SIZE) {
-        chosen_friend = random_element(friends, SO_NUM_FRIENDS);
-        incoming.hops++;
-        if (msgsnd(queue_id, &incoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
+        int friend_queue;
+        chosen_friend = random_element(friends, nof_friends);
+        if (chosen_friend == -1) {
+          fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
+        }
+        if ((friend_queue = msgget(chosen_friend, S_IWUSR)) == -1) {
+          fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), chosen_friend);
+          node_cleanup();
+          exit(EXIT_FAILURE);
+        }
+        incoming.hops += 1;
+        fprintf(LOG_FILE, "sending transaction to friend\n");
+        if (msgsnd(friend_queue, &incoming, sizeof(struct msg), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
           }
@@ -109,9 +120,8 @@ static void sig_handler(int sig) {
       else {
         kill(t.sender, ACCEPT_TRANSACTION);
         transaction_pool[nof_transaction++] = t;
+        print_transaction(t);
       }
-
-      print_transaction(t);
     }
     break;
   }
@@ -132,8 +142,12 @@ static void sig_handler(int sig) {
     if (nof_transaction > 0) {
       int chosen_friend;
       struct msg outcoming;
+      outcoming.hops = 0;
       outcoming.transaction = transaction_pool[--nof_transaction];
-      chosen_friend = random_element(friends, SO_NUM_FRIENDS);
+      chosen_friend = random_element(friends, nof_friends);
+      if (chosen_friend == -1) {
+        fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
+      }
       if (msgsnd(queue_id, &outcoming, sizeof(transaction) - sizeof(unsigned int), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
           fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
@@ -144,6 +158,8 @@ static void sig_handler(int sig) {
     alarm(3);
     break;
   }
+  default:
+    fprintf(LOG_FILE, "node %d: different signal received\n", getpid());
   }
 
 }
@@ -186,6 +202,16 @@ static void generate()
     node_cleanup();
     exit(EXIT_FAILURE);
   }
+  if (sigaction(SIGUSR2, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "init_node: could not associate handler to SIGUSR2.\n");
+    node_cleanup();
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGALRM, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "init_node: could not associate handler to SIGUSR1.\n");
+    node_cleanup();
+    exit(EXIT_FAILURE);
+  }
   if (sigaction(SIGTERM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "init_node: could not associate handler to SIGTERM.\n");
     node_cleanup();
@@ -216,33 +242,11 @@ static void get_out_of_the_pool()
   }
 }
 
-static transaction* extract_block()
-{
-  int gain = 0;
-  int i = 0;
-  transaction node_transaction;
-  transaction* block = calloc(SO_BLOCK_SIZE, sizeof(transaction));
-  if (block == NULL) {
-    fprintf(ERR_FILE, "extract_block: cannot allocate memory for a new transaction block. Check memory usage\n");
-    node_cleanup();
-    exit(EXIT_FAILURE);
-  }
-  while (i < SO_BLOCK_SIZE - 1)
-  {
-    /* check transazione non è presente nel libro mastro non necessario (se è nella transaction pool non è ANCORA nel libro mastro) */
-    block[i] = transaction_pool[i];
-    gain += block[i].reward;
-    i++;
-  }
-
-  new_transaction(&node_transaction, SELF_SENDER, getpid(), gain, 0);
-  block[SO_BLOCK_SIZE] = node_transaction;
-  return block;
-}
-
-void simulate_processing(transaction* block, struct master_book book, int sem_id) {
+void simulate_processing(struct master_book book, int sem_id) {
   struct sembuf sops;
   sigset_t mask;
+  int i = 0;
+  int gain = 0;
 
 
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
@@ -250,8 +254,16 @@ void simulate_processing(transaction* block, struct master_book book, int sem_id
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
-  book.blocks[*book.size] = block;
-  (*book.size)++;
+  while (i < SO_BLOCK_SIZE)
+  {
+    /* setta la posizione di memoria 0x0 a x*/
+    book.blocks[i + *book.size] = transaction_pool[i];
+    gain += transaction_pool[i].reward;
+    i++;
+  }
+  /* transazione di guadagno del nodo */
+  new_transaction(&book.blocks[i + *book.size], SELF_SENDER, getpid(), gain, 0);
+  *book.size += SO_BLOCK_SIZE;
 
   sops.sem_num = 1;
   sops.sem_op = 1;
@@ -260,22 +272,24 @@ void simulate_processing(transaction* block, struct master_book book, int sem_id
   get_out_of_the_pool();
 }
 
-void init_node(int* friends, int pipe_read, int shm_book_id, int shm_book_size_id)
+void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_size_id)
 {
+  struct sembuf sops;
   int sem_id;
   struct master_book book;
 
-  friends = friends;
+  friends = friends_list;
   nof_friends = SO_NUM_FRIENDS;
-
-  generate();
-
-  fprintf(LOG_FILE, "Node %d: completed setup\n", getpid());
 
   if ((sem_id = semget(getppid(), 0, 0)) == -1) {
     fprintf(ERR_FILE, "node n%d: err\n", getpid());
     exit(EXIT_FAILURE);
   }
+
+  generate();
+
+  fprintf(LOG_FILE, "Node %d: completed setup\n", getpid());
+
 
 
   if ((book.blocks = attach_shm_memory(shm_book_id)) == NULL) {
@@ -290,6 +304,13 @@ void init_node(int* friends, int pipe_read, int shm_book_id, int shm_book_size_i
     exit(EXIT_FAILURE);
   }
 
+  sops.sem_num = ID_READY_ALL;
+  sops.sem_op = -1;
+  semop(sem_id, &sops, 1);
+
+  sops.sem_op = 0;
+  semop(sem_id, &sops, 1);
+
   while (1)
   {
     transaction* block = NULL;
@@ -298,10 +319,8 @@ void init_node(int* friends, int pipe_read, int shm_book_id, int shm_book_size_i
       continue;
     }
     alarm(3);
-    block = extract_block();
-    simulate_processing(block, book, sem_id);
+    simulate_processing(book, sem_id);
 
     free(block);
   }
-
 }

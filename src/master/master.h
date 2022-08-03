@@ -1,6 +1,6 @@
 #ifndef _MASTER_H_
 #define _MASTER_H_
-#define SHM_NODES_ID 420
+#define ID_READY_ALL 0
 struct nodes {
   int* size;
   int* array;

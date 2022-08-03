@@ -2,7 +2,7 @@
 #include "../master_book/master_book.h"
 #include "user.h"
 #include "../pid_list/pid_list.h"
-#include "../master.h"
+#include "../master/master.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -37,17 +37,12 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
 {
   int sem_id;
 
-  int* nodes_array;
-  transaction** registry;
-  int* size_nodes;
-  int* size_book;
-
   struct nodes nodes;
   struct master_book book;
 
   struct sembuf sops;
   int bilancio_corrente = SO_BUDGET_INIT;
-  int block_reached;
+  int block_reached = 0;
   struct sigaction sa;
   int queue_id;
   sigset_t mask;
@@ -101,7 +96,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       /* estrazione di un nodo casuale*/
       int random_node = random_element(nodes.array, *nodes.size);
       int cifra_utente;
-      int num;
+      int num = 0;
       int reward;
       struct msg message;
       if (random_user == -1) {
@@ -150,61 +145,53 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
         cont_try++;
       }
       else {
+        fprintf(LOG_FILE, "u%d sending SIGUSR1 to %d\n", getpid(), random_node);
         kill(random_node, SIGUSR1);
         bilancio_corrente -= (t->quantita + t->reward);
       }
       free(t);
     }
     else {
+      fprintf(LOG_FILE, "u%d: non ho soldi\n", getpid());
       cont_try++;
     }
 
     /*tempo di attesa dopo l'invio di una transazione*/
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
   }
+  fprintf(LOG_FILE, "u%d, esco perchè ho superato i SO_RETRY\n", getpid());
   exit(EARLY_FAILURE);
 }
 
 int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 {
   int i = *block_reached;
-  unsigned int size = *book.size;
+  int size = *book.size;
   while (i < size) {
-    transaction* ptr = book.blocks[i++];
-    int j = 0;
-    while (j++ < SO_BLOCK_SIZE - 1) {
-      if (ptr->receiver == getpid()) {
-        bilancio += ptr->quantita;
-      }
-      else if (ptr->sender == getpid()) {
-        bilancio -= (ptr->quantita + ptr->reward);
-      }
-      ptr++;
+    transaction t = book.blocks[i * SO_BLOCK_SIZE];
+    if (t.receiver == getpid()) {
+      bilancio += t.quantita;
     }
+    else if (t.sender == getpid()) {
+      bilancio -= (t.quantita + t.reward);
+    }
+    i++;
   }
-  *block_reached = i;
+  *block_reached = i / SO_BLOCK_SIZE;
   return bilancio;
 }
 
 void usr_handler(int signal) {
   switch (signal) {
   case SIGUSR1:
-  {
-    time_t rawtime;
-    struct tm* timeinfo;
-
-    time(&rawtime);
-    timeinfo = localtime(&rawtime);
-    cont_try = 0;
     break;
-  }
   case SIGUSR2:
   {
     fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try++));
     break;
   }
   case SIGTERM:
-    fprintf(LOG_FILE, "u%d: killed by parent. Ending successfully\n", getpid());
+    /* fprintf(LOG_FILE, "u%d: killed by parent. Ending successfully\n", getpid()); */
     exit(EXIT_SUCCESS);
     break;
   default:
@@ -212,3 +199,4 @@ void usr_handler(int signal) {
     break;
   }
 }
+/* [ [ [] [] [] ]   [ [] [] [] ]   [ [] [] [] ] ]    */

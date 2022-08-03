@@ -1,7 +1,7 @@
 #ifndef _TRANSACTION_H_
 #define _TRANSACTION_H_
 
-#define SO_BLOCK_SIZE 10
+#define SO_BLOCK_SIZE 3
 
 typedef struct
 {
@@ -14,7 +14,7 @@ typedef struct
 
 struct master_book {
   int* size;
-  transaction** blocks;
+  transaction* blocks;
 };
 
 struct msg {
