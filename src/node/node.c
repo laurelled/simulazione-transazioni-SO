@@ -77,7 +77,7 @@ static void sig_handler(int sig) {
 
       bzero(incoming, sizeof(struct msg));
 
-      if (msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+      if (msgrcv(queue_id, incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
         TEST_ERROR;
         if (errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
@@ -97,7 +97,7 @@ static void sig_handler(int sig) {
           node_cleanup();
           exit(EXIT_FAILURE);
         }
-        if (msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+        if (msgsnd(master_q, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             node_cleanup();
