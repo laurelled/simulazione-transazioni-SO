@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/msg.h>
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,8 +31,7 @@
                        getpid(),\
                        errno,\
                        strerror(errno)); \
-                       master_cleanup(); \
-                       exit(EXIT_FAILURE); }
+                       master_cleanup(); }
 
 #define SIM_END_SEC 0
 #define SIM_END_USR 1
@@ -113,6 +113,17 @@ void stop_simulation() {
 }
 
 void master_cleanup() {
+  sigset_t mask;
+  alarm(0);
+
+  fprintf(ERR_FILE, "master: richiamato master cleanup\n");
+
+  bzero(&mask, sizeof(sigset_t));
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGUSR1);
+  sigaddset(&mask, SIGINT);
+  sigprocmask(SIG_BLOCK, &mask, NULL);
+
   if (users != NULL && nodes.array != NULL) {
     stop_simulation();
   }
@@ -147,6 +158,7 @@ void master_cleanup() {
     TEST_ERROR;
   }
 
+  exit(EXIT_FAILURE);
 }
 
 int  start_shared_memory(int key, size_t size) {
@@ -274,7 +286,7 @@ void handler(int signal) {
   case SIGINT:
     fprintf(LOG_FILE, "master: recieved a SIGINT at %ds from simulation start\n", simulation_seconds);
     master_cleanup();
-    exit(EXIT_FAILURE);
+
     break;
   case SIGUSR1:
   {
@@ -283,24 +295,27 @@ void handler(int signal) {
     transaction arriva;
     int file_descriptors[2];
     struct sembuf sops;
-    int i = 0;
     int new_node_msg_id;
+    int i = 0;
+
+    fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
 
     bzero(&sops, sizeof(struct sembuf));
 
+    errno = 0;
     pipe(file_descriptors);
     TEST_ERROR_AND_FAIL;
 
-    msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
+    msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT);
     if (errno != ENOMSG) {
       TEST_ERROR_AND_FAIL;
+      master_cleanup();
     }
-    else {
-      fprintf(LOG_FILE, "master: no msg in queue\n");
-    }
+    else
+      break;
+    errno = 0;
 
     arriva = message.mtext;
-    errno = 0;
 
     if (*nodes.size < SO_NODES_NUM * 2) {
       switch ((child = fork())) {
@@ -331,20 +346,22 @@ void handler(int signal) {
       default:
       {
         int* lista_nodi = init_list(SO_NUM_FRIENDS);
-        TEST_ERROR_AND_FAIL;
-        i = 0;
         close(file_descriptors[0]);
+        if (lista_nodi == NULL) {
+          TEST_ERROR_AND_FAIL;
+        }
+        i = 0;
         while (i < SO_NUM_FRIENDS) {
           int node_random = random_element(nodes.array, *nodes.size);
           if (node_random == -1) {
             fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
             master_cleanup();
-            exit(EXIT_FAILURE);
           }
           if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
             lista_nodi[i++] = node_random;
-            write(file_descriptors[1], &child, sizeof(int));
-            TEST_ERROR;
+            if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
+              TEST_ERROR_AND_FAIL;
+            }
             fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
             kill(node_random, SIGUSR2);
           }
@@ -356,21 +373,23 @@ void handler(int signal) {
 
       sops.sem_num = ID_READY_ALL;
       sops.sem_op = 1;
-      semop(sem_id, &sops, 1);
+      if (semop(sem_id, &sops, 1) == -1) {
+        TEST_ERROR_AND_FAIL;
+      }
 
       sops.sem_op = 0;
-      semop(sem_id, &sops, 1);
+      if (semop(sem_id, &sops, 1) == -1) {
+        TEST_ERROR_AND_FAIL;
+      }
 
       /*msgget del nodo */
       if ((new_node_msg_id = msgget(child, 0)) == -1) {
         fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
         master_cleanup();
-        exit(EXIT_FAILURE);
-
       }
       /*msgsnd della transaction al nodo */
-      message.mtype = 0;
-      msgsnd(new_node_msg_id, &arriva, sizeof(struct msg) - sizeof(unsigned int), IPC_NOWAIT);
+      message.mtype = 1;
+      msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
       TEST_ERROR_AND_FAIL;
 
       kill(child, SIGUSR1);
@@ -408,6 +427,7 @@ int main() {
   if ((node_budget = init_list(SO_NODES_NUM * 2)) == NULL) {
     fprintf(ERR_FILE, "master: cannot allocate memory for node_budget.\n");
     exit(EXIT_FAILURE);
+
   }
   if ((user_budget = init_list(SO_USERS_NUM)) == NULL) {
     fprintf(ERR_FILE, "master: cannot allocate memory for user_budget.\n");
@@ -461,14 +481,11 @@ int main() {
   TEST_ERROR_AND_FAIL;
 
   /* Inizializzazione coda di messaggi master-nodi */
-  queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
-  TEST_ERROR_AND_FAIL;
-  fprintf(LOG_FILE, "master: inizializzata la coda con key %d e id %d\n", getpid(), queue_id);
-  msgctl(queue_id, IPC_STAT, &stats);
-  TEST_ERROR_AND_FAIL;
-  stats.msg_qbytes = sizeof(transaction) * (long unsigned int) SO_NODES_NUM;
-  msgctl(queue_id, IPC_SET, &stats);
-  TEST_ERROR_AND_FAIL;
+  if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
+    TEST_ERROR_AND_FAIL;
+  }
+  else
+    fprintf(LOG_FILE, "master: inizializzata la coda con key %d e id %d\n", getpid(), queue_id);
 
   /* Handling segnali SIGALRM, SIGINT, SIGUSR1 */
   bzero(&mask, sizeof(sigset_t));
@@ -480,17 +497,14 @@ int main() {
   if (sigaction(SIGALRM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
     master_cleanup();
-    exit(EXIT_FAILURE);
   }
   if (sigaction(SIGINT, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGINT.\n");
     master_cleanup();
-    exit(EXIT_FAILURE);
   }
   if (sigaction(SIGUSR1, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
     master_cleanup();
-    exit(EXIT_FAILURE);
   }
   /* Fine handling segnali */
 
@@ -506,7 +520,7 @@ int main() {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
       master_cleanup();
-      exit(EXIT_FAILURE);
+
     case 0:
     {
       int* friends;
@@ -550,7 +564,7 @@ int main() {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
       master_cleanup();
-      exit(EXIT_FAILURE);
+
     case 0:
     {
       int* users;
@@ -591,22 +605,20 @@ int main() {
         if (errno == EINTR) {
           continue;
         }
-        master_cleanup();
         fprintf(ERR_FILE, "master: wait failed for an unexpected error: %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
+        master_cleanup();
       }
       if (WIFEXITED(status)) {
         if (WEXITSTATUS(status) == EXIT_FAILURE) {
           fprintf(ERR_FILE, "Child %d encountered an error. Stopping simulation\n", terminated_p);
-          master_cleanup();
           free(nof_transactions);
-          exit(EXIT_FAILURE);
+          master_cleanup();
+
         }
         else {
           if ((node_index = find_element(nodes.array, *nodes.size, terminated_p)) != -1) {
             fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
             master_cleanup();
-            exit(EXIT_FAILURE);
           }
           else {
             inactive_users++;
@@ -626,11 +638,7 @@ int main() {
         if (errno == EINTR) {
           continue;
         }
-        else if (errno == ECHILD) {
-          break;
-        }
-        master_cleanup();
-        exit(EXIT_FAILURE);
+        TEST_ERROR_AND_FAIL;
       }
       if ((index = find_element(nodes.array, SO_NODES_NUM, terminated_p)) != -1) {
         if (WIFEXITED(status)) {
@@ -665,16 +673,16 @@ int main() {
 
   if (shmctl(shm_book_id, IPC_RMID, NULL) == -1) {
     fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_book_id);
-    exit(EXIT_FAILURE);
+    master_cleanup();
   }
   if (shmctl(shm_nodes_array_id, IPC_RMID, NULL) == -1) {
     fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_nodes_array_id);
-    exit(EXIT_FAILURE);
+    master_cleanup();
   }
 
   if (semctl(sem_id, 0, IPC_RMID) == -1) {
     fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
-    exit(EXIT_FAILURE);
+    master_cleanup();
   }
   fprintf(LOG_FILE, "Completed simulation. Exiting...\n");
   exit(EXIT_SUCCESS);

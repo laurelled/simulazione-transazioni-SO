@@ -100,6 +100,11 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       int num = 0;
       int reward;
       struct msg* message = malloc(sizeof(struct msg));
+      if (message == NULL) {
+        TEST_ERROR;
+        CHILD_STOP_SIMULATION;
+        exit(EXIT_FAILURE);
+      }
       if (random_user == -1) {
         fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
         exit(EXIT_SUCCESS);
@@ -145,6 +150,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
         bilancio_corrente -= (t.quantita + t.reward);
         kill(random_node, SIGUSR1);
       }
+      free(message);
     }
     else {
       cont_try++;

@@ -66,42 +66,58 @@ static void sig_handler(int sig) {
     /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
       int chosen_friend;
-      struct msg incoming;
       transaction t;
+      struct msg* incoming = malloc(sizeof(struct msg));
+      if (incoming == NULL) {
+        TEST_ERROR;
+        node_cleanup();
+        CHILD_STOP_SIMULATION;
+        exit(EXIT_FAILURE);
+      }
 
-      bzero(&incoming, sizeof(struct msg));
+      bzero(incoming, sizeof(struct msg));
 
-      if (msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+      if (msgrcv(queue_id, incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
         if (errno != EAGAIN && errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
           node_cleanup();
+          CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
       }
-      t = incoming.mtext;
+      t = incoming->mtext;
       /*gestione invio transazione al master se SO_HOPS raggiunti */
-      if (incoming.mtype == SO_HOPS + 1) {
-        int master_q;
+      if (incoming->mtype == SO_HOPS + 1) {
+        int master_q = 0;
+        fprintf(ERR_FILE, "n%d: cerco di ottenere la coda del padre\n", getpid());
         if ((master_q = msgget(getppid(), 0)) == -1) {
           fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
           node_cleanup();
           exit(EXIT_FAILURE);
         }
-        if (msgsnd(master_q, &t, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+        else {
+          fprintf(ERR_FILE, "n%d: connesso alla queue %d con key %d\n", getpid(), master_q, getppid());
+        }
+        fprintf(ERR_FILE, "n%d: superata la msgget\n", getpid());
+        if (msgsnd(master_q, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
-            /* fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));*/
+            fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             node_cleanup();
+            CHILD_STOP_SIMULATION;
             exit(EXIT_FAILURE);
           }
-          /*fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid());*/
+          else {
+            fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid());
+          }
         }
         else {
+          fprintf(ERR_FILE, "n%d: notifico il padre %d con SIGUSR1\n", getpid(), getppid());
           kill(getppid(), SIGUSR1);
         }
       }
       /*gestione transaction_pool piena */
       else if (nof_transaction == SO_TP_SIZE) {
-        int friend_queue;
+        int friend_queue = 0;
         chosen_friend = random_element(friends, nof_friends);
         if (chosen_friend == -1) {
           fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
@@ -115,8 +131,11 @@ static void sig_handler(int sig) {
           CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
-        incoming.mtype += 1;
-        if (msgsnd(friend_queue, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+        else {
+          fprintf(ERR_FILE, "n%d: ottenuta coda del nodo %d con id %d\n", getpid(), chosen_friend, friend_queue);
+        }
+        incoming->mtype += 1;
+        if (msgsnd(friend_queue, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
             node_cleanup();
@@ -125,6 +144,7 @@ static void sig_handler(int sig) {
           }
         }
 
+        free(incoming);
         kill(chosen_friend, SIGUSR1);
       }
       /* accetta la transazione nella sua transaction pool*/
@@ -167,6 +187,7 @@ static void sig_handler(int sig) {
     if (nof_transaction > 0) {
       sigset_t mask;
       int chosen_friend;
+      int friend_queue;
       struct msg outcoming;
       outcoming.mtype = 1;
 
@@ -184,7 +205,17 @@ static void sig_handler(int sig) {
         exit(EXIT_FAILURE);
       }
 
-      if (msgsnd(queue_id, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+      if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
+        fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
+        node_cleanup();
+        CHILD_STOP_SIMULATION;
+        exit(EXIT_FAILURE);
+      }
+      else {
+        fprintf(ERR_FILE, "n%d: ottenuta coda del nodo %d con id %d\n", getpid(), chosen_friend, friend_queue);
+      }
+
+      if (msgsnd(friend_queue, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
           fprintf(ERR_FILE, "node n%d: SIGALRM, recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
           CHILD_STOP_SIMULATION;
@@ -347,7 +378,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   nof_friends = SO_NUM_FRIENDS;
 
   if ((sem_id = semget(getppid(), 0, 0)) == -1) {
-    fprintf(ERR_FILE, "node n%d: err\n", getpid());
+    fprintf(ERR_FILE, "node n%d: error retrieving parent semaphore (%s)\n", getpid(), strerror(errno));
     exit(EXIT_FAILURE);
   }
 
