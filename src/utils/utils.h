@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define CHILD_STOP_SIMULATION kill(getppid(), SIGINT);
+
 #define TEST_ERROR    if (errno) {fprintf(ERR_FILE, \
                        "%s:%d: PID=%5d: Error %d (%s)\n",\
                        __FILE__,\

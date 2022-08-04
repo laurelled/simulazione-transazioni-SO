@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#define TEST_ERROR_AND_FAIL    if (errno && errno != ESRCH) {fprintf(ERR_FILE, \
+#define TEST_ERROR_AND_FAIL    if (errno && errno != ESRCH && errno != EAGAIN) {fprintf(ERR_FILE, \
                        "%s:%d: PID=%5d: Error %d (%s)\n",\
                        __FILE__,\
                        __LINE__,\
@@ -75,7 +75,6 @@ static int block_reached;
 
 static int inactive_users;
 static int simulation_seconds = 0;
-static int stop_sim = 0;
 
 void periodical_update() {
   int index;
@@ -90,10 +89,11 @@ void periodical_update() {
       index = find_element(users, SO_USERS_NUM, t.receiver);
       user_budget[index] += t.quantita;
     }
+    if ((index = find_element(nodes.array, *nodes.size, t.receiver)) != -1)
+      node_budget[index] += t.quantita;
     i++;
   }
-  index = find_element(nodes.array, *nodes.size, t.receiver);
-  node_budget[index] += t.quantita;
+
   block_reached = i / SO_BLOCK_SIZE;
 }
 
@@ -231,12 +231,12 @@ void summary_print(int ending_reason, int* users, int* user_budget, int* nodes, 
 
 void wait_siblings(int sem_num) {
   struct sembuf sops;
+  bzero(&sops, sizeof(struct sembuf));
 
   sops.sem_num = sem_num;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
-  fprintf(LOG_FILE, "CHILD %d: waiting for green light.\n", getpid());
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 }
@@ -279,23 +279,34 @@ void handler(int signal) {
   case SIGUSR1:
   {
     int child;
+    struct msg message;
     transaction arriva;
     int file_descriptors[2];
     struct sembuf sops;
     int i = 0;
     int new_node_msg_id;
 
+    bzero(&sops, sizeof(struct sembuf));
+
     pipe(file_descriptors);
     TEST_ERROR_AND_FAIL;
 
-    msgrcv(queue_id, &arriva, sizeof(transaction), 0, IPC_NOWAIT);
-    TEST_ERROR_AND_FAIL;
+    msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(unsigned int), 0, IPC_NOWAIT);
+    if (errno != ENOMSG) {
+      TEST_ERROR_AND_FAIL;
+    }
+    else {
+      fprintf(LOG_FILE, "master: no msg in queue\n");
+    }
+
+    arriva = message.mtext;
+    errno = 0;
 
     if (*nodes.size < SO_NODES_NUM * 2) {
       switch ((child = fork())) {
       case -1:
         fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
-        master_cleanup();
+        CHILD_STOP_SIMULATION;
         exit(EXIT_FAILURE);
         break;
       case 0:
@@ -310,7 +321,7 @@ void handler(int signal) {
         close(file_descriptors[1]);
         friends = assign_friends(nodes.array, *nodes.size);
         if (friends == NULL) {
-          kill(getppid(), SIGTERM);
+          CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
 
@@ -333,6 +344,8 @@ void handler(int signal) {
           if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
             lista_nodi[i++] = node_random;
             write(file_descriptors[1], &child, sizeof(int));
+            TEST_ERROR;
+            fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
             kill(node_random, SIGUSR2);
           }
         }
@@ -349,19 +362,16 @@ void handler(int signal) {
       semop(sem_id, &sops, 1);
 
       /*msgget del nodo */
-      if ((new_node_msg_id = msgget(child, S_IWUSR)) == -1) {
+      if ((new_node_msg_id = msgget(child, 0)) == -1) {
         fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
         master_cleanup();
         exit(EXIT_FAILURE);
 
       }
       /*msgsnd della transaction al nodo */
-      if (msgsnd(new_node_msg_id, &arriva, sizeof(transaction), IPC_NOWAIT) == -1) {
-        if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "master n%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
-        }
-
-      }
+      message.mtype = 0;
+      msgsnd(new_node_msg_id, &arriva, sizeof(struct msg) - sizeof(unsigned int), IPC_NOWAIT);
+      TEST_ERROR_AND_FAIL;
 
       kill(child, SIGUSR1);
 
@@ -409,12 +419,6 @@ int main() {
   }
 
   fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
-
-  bzero(&mask, sizeof(sigset_t));
-  sigemptyset(&mask);
-  act.sa_handler = handler;
-  act.sa_flags = 0;
-  act.sa_mask = mask;
 
   /* Inizializzazione semafori start sincronizzato e write del libro mastro */
   sem_id = semget(getpid(), NUM_SEM, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
@@ -467,6 +471,12 @@ int main() {
   TEST_ERROR_AND_FAIL;
 
   /* Handling segnali SIGALRM, SIGINT, SIGUSR1 */
+  bzero(&mask, sizeof(sigset_t));
+  sigemptyset(&mask);
+  act.sa_handler = handler;
+  act.sa_flags = SA_NODEFER;
+  act.sa_mask = mask;
+
   if (sigaction(SIGALRM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
     master_cleanup();
@@ -573,7 +583,7 @@ int main() {
 
     int i = 0;
     alarm(1);
-    while (!stop_sim && simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
+    while (simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
       int terminated_p = wait(&status);

@@ -18,8 +18,8 @@ struct master_book {
 };
 
 struct msg {
-  unsigned int hops;
-  transaction transaction;
+  long mtype;
+  transaction mtext;
 };
 
 

@@ -46,6 +46,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
   struct sigaction sa;
   int queue_id;
   sigset_t mask;
+  bzero(&sops, sizeof(struct sembuf));
   sigemptyset(&mask);
   sigaddset(&mask, SIGINT);
 
@@ -90,7 +91,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
   while (cont_try < SO_RETRY)
   {
     if ((bilancio_corrente = calcola_bilancio(bilancio_corrente, book, &block_reached)) >= 2) {
-      transaction* t;
+      transaction t;
       /* estrazione di un destinatario casuale*/
       int random_user = random_element(users, SO_USERS_NUM);
       /* estrazione di un nodo casuale*/
@@ -98,7 +99,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       int cifra_utente;
       int num = 0;
       int reward;
-      struct msg message;
+      struct msg* message = malloc(sizeof(struct msg));
       if (random_user == -1) {
         fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
         exit(EXIT_SUCCESS);
@@ -110,6 +111,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       }
 
       /* generazione di un importo da inviare*/
+      srand(getpid() + clock());
       num = (rand() % (bilancio_corrente - 2 + 1)) + 2;
       reward = num / 100 * SO_REWARD;
       if (reward == 0)
@@ -118,48 +120,39 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
 
       /* system V message queue */
       /* ricerca della coda di messaggi del nodo random */
-      if ((queue_id = msgget(random_node, S_IWUSR | S_IRUSR)) == -1) {
-        if (errno == ENOENT) {
-          fprintf(ERR_FILE, "init_user u%d: message queue of node %d not found\n", getpid(), random_node);
-          exit(EXIT_FAILURE);
-        }
-        else if (errno == EACCES) {
-          fprintf(ERR_FILE, "init_user u%d: not enough permits to access message queue of node %d \n", getpid(), random_node);
-          exit(EXIT_FAILURE);
-        }
+      if ((queue_id = msgget(random_node, 0)) == -1) {
+        fprintf(ERR_FILE, "init_user u%d: cannot retrieve message queue of node %d (%s)\n", getpid(), random_node, strerror(errno));
+        CHILD_STOP_SIMULATION;
+        exit(EXIT_FAILURE);
       }
       /* creazione di una transazione e invio di tale al nodo generato*/
-      t = malloc(sizeof(transaction));
-      new_transaction(t, getpid(), random_user, cifra_utente, reward);
+      new_transaction(&t, getpid(), random_user, cifra_utente, reward);
 
-
-      message.hops = 0;
-      message.transaction = *t;
-      if (msgsnd(queue_id, &message, sizeof(struct msg), IPC_NOWAIT) == -1) {
+      message->mtype = 1;
+      message->mtext = t;
+      if (msgsnd(queue_id, message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction: %s.\n", getpid(), strerror(errno));
+          fprintf(ERR_FILE, "[%ld] init_user u%d: recieved an unexpected error while sending transaction at queu with id %d of node %d: %s.\n", clock() / CLOCKS_PER_SEC, getpid(), queue_id, random_node, strerror(errno));
+          CHILD_STOP_SIMULATION;
+          exit(EXIT_FAILURE);
         }
         else {
           fprintf(ERR_FILE, "init_user u%d: EGAIN errno recieved: %s.\n", getpid(), strerror(errno));
+          cont_try++;
         }
-        cont_try++;
       }
       else {
-        fprintf(LOG_FILE, "u%d sending SIGUSR1 to %d\n", getpid(), random_node);
+        bilancio_corrente -= (t.quantita + t.reward);
         kill(random_node, SIGUSR1);
-        bilancio_corrente -= (t->quantita + t->reward);
       }
-      free(t);
     }
     else {
-      fprintf(LOG_FILE, "u%d: non ho soldi\n", getpid());
       cont_try++;
     }
 
     /*tempo di attesa dopo l'invio di una transazione*/
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
   }
-  fprintf(LOG_FILE, "u%d, esco perchè ho superato i SO_RETRY\n", getpid());
   exit(EARLY_FAILURE);
 }
 
@@ -199,4 +192,3 @@ void usr_handler(int signal) {
     break;
   }
 }
-/* [ [ [] [] [] ]   [ [] [] [] ]   [ [] [] [] ] ]    */
