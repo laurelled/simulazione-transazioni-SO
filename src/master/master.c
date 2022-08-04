@@ -288,7 +288,7 @@ void handler(int signal) {
     master_cleanup();
 
     break;
-  case SIGUSR1:
+  case SIGQUIT:
   {
     int child;
     struct msg message;
@@ -299,6 +299,8 @@ void handler(int signal) {
     int i = 0;
 
     fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
+
+    fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
 
     bzero(&sops, sizeof(struct sembuf));
 
@@ -311,9 +313,11 @@ void handler(int signal) {
       TEST_ERROR_AND_FAIL;
       master_cleanup();
     }
-    else
+    else {
+      fprintf(ERR_FILE, "master: no msg in queue\n");
+      errno = 0;
       break;
-    errno = 0;
+    }
 
     arriva = message.mtext;
 
@@ -502,7 +506,7 @@ int main() {
     fprintf(ERR_FILE, "master: could not associate handler to SIGINT.\n");
     master_cleanup();
   }
-  if (sigaction(SIGUSR1, &act, NULL) < 0) {
+  if (sigaction(SIGQUIT, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
     master_cleanup();
   }

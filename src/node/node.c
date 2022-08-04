@@ -42,7 +42,7 @@ static int nof_transaction;
 
 void node_cleanup() {
   free(transaction_pool);
-  kill(getppid(), SIGINT);
+  CHILD_STOP_SIMULATION;
   msgctl(queue_id, IPC_RMID, NULL);
 }
 
@@ -56,7 +56,7 @@ static void sig_handler(int sig) {
     exit(nof_transaction);
   case SIGUSR1:
   {
-    int msg_num;
+    msgqnum_t msg_num;
     if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
       fprintf(ERR_FILE, "node n%d sig_handler: reading error of IPC_STAT of queue with id %d. error %s.\n", getpid(), queue_id, strerror(errno));
       node_cleanup();
@@ -77,13 +77,15 @@ static void sig_handler(int sig) {
 
       bzero(incoming, sizeof(struct msg));
 
-      if (msgrcv(queue_id, incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
-        if (errno != EAGAIN && errno != ENOMSG) {
+      if (msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+        TEST_ERROR;
+        if (errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
           node_cleanup();
           CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
+        continue;
       }
       t = incoming->mtext;
       /*gestione invio transazione al master se SO_HOPS raggiunti */
@@ -95,11 +97,7 @@ static void sig_handler(int sig) {
           node_cleanup();
           exit(EXIT_FAILURE);
         }
-        else {
-          fprintf(ERR_FILE, "n%d: connesso alla queue %d con key %d\n", getpid(), master_q, getppid());
-        }
-        fprintf(ERR_FILE, "n%d: superata la msgget\n", getpid());
-        if (msgsnd(master_q, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+        if (msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             node_cleanup();
@@ -111,8 +109,7 @@ static void sig_handler(int sig) {
           }
         }
         else {
-          fprintf(ERR_FILE, "n%d: notifico il padre %d con SIGUSR1\n", getpid(), getppid());
-          kill(getppid(), SIGUSR1);
+          kill(getppid(), SIGQUIT);
         }
       }
       /*gestione transaction_pool piena */
@@ -122,13 +119,11 @@ static void sig_handler(int sig) {
         if (chosen_friend == -1) {
           fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
           node_cleanup();
-          CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
         if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
           fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
           node_cleanup();
-          CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
         else {
@@ -139,18 +134,23 @@ static void sig_handler(int sig) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
             node_cleanup();
-            CHILD_STOP_SIMULATION;
             exit(EXIT_FAILURE);
           }
         }
-
-        free(incoming);
         kill(chosen_friend, SIGUSR1);
       }
       /* accetta la transazione nella sua transaction pool*/
       else {
-        kill(t.sender, ACCEPT_TRANSACTION);
-        transaction_pool[nof_transaction++] = t;
+        if (t.sender <= 0) {
+          fprintf(ERR_FILE, "n%d: wtf\n", getpid());
+          print_transaction(t);
+          node_cleanup();
+          exit(EXIT_FAILURE);
+        }
+        else {
+          kill(t.sender, ACCEPT_TRANSACTION);
+          transaction_pool[nof_transaction++] = t;
+        }
         /*
         fprintf(LOG_FILE, "[%ld] n%d: mtype: %ld/%d ", clock() / CLOCKS_PER_SEC, getpid(), incoming.mtype - 1, SO_HOPS);
         print_transaction(t);
@@ -166,7 +166,7 @@ static void sig_handler(int sig) {
       if (errno != EINTR) {
         fprintf(ERR_FILE, "node n%d: recieved an unexpected error while trying to read from pipe: %s\n", getpid(), strerror(errno));
         node_cleanup();
-        CHILD_STOP_SIMULATION;
+
         exit(EXIT_FAILURE);
       }
     };
@@ -174,7 +174,7 @@ static void sig_handler(int sig) {
     if (friends == NULL) {
       fprintf(LOG_FILE, "n%d: expand_list error in SIGUSR2\n", getpid());
       node_cleanup();
-      CHILD_STOP_SIMULATION;
+
       exit(EXIT_FAILURE);
     }
     friends[nof_friends++] = nodo_ricevuto;
@@ -189,18 +189,18 @@ static void sig_handler(int sig) {
       int chosen_friend;
       int friend_queue;
       struct msg outcoming;
-      outcoming.mtype = 1;
 
       bzero(&mask, sizeof(sigset_t));
 
       sigemptyset(&mask);
       sigaddset(&mask, SIGUSR1);
       sigprocmask(SIG_BLOCK, &mask, NULL);
-      outcoming.mtext = transaction_pool[nof_transaction];
+      outcoming.mtype = 1;
+      outcoming.mtext = transaction_pool[nof_transaction - 1];
       chosen_friend = random_element(friends, nof_friends);
       if (chosen_friend == -1) {
         fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
-        CHILD_STOP_SIMULATION;
+
         node_cleanup();
         exit(EXIT_FAILURE);
       }
@@ -218,7 +218,7 @@ static void sig_handler(int sig) {
       if (msgsnd(friend_queue, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
           fprintf(ERR_FILE, "node n%d: SIGALRM, recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
-          CHILD_STOP_SIMULATION;
+
           node_cleanup();
           exit(EXIT_FAILURE);
         }
@@ -227,14 +227,14 @@ static void sig_handler(int sig) {
         nof_transaction--;
         kill(chosen_friend, SIGUSR1);
       }
-      sigprocmask(SIG_BLOCK, &mask, NULL);
+      sigprocmask(SIG_UNBLOCK, &mask, NULL);
     }
     alarm(3);
     break;
   }
   case SIGSEGV:
     fprintf(ERR_FILE, "n%d: recieved a SIGSEGV, stopping simulation.\n", getpid());
-    CHILD_STOP_SIMULATION;
+
     exit(EXIT_FAILURE);
     break;
   default:
