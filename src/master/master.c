@@ -412,6 +412,7 @@ void handler(int signal) {
 
 int main() {
   struct sembuf sops;
+  union semun semval;
   sigset_t mask;
   struct sigaction act;
   struct msqid_ds stats;
@@ -422,6 +423,7 @@ int main() {
   int i = 0;
   bzero(&stats, sizeof(struct msqid_ds));
   bzero(&sops, sizeof(struct sembuf));
+  /*bzero(&semval, sizeof(union semun));*/
   load_constants();
 
   if ((nodes_write_fd = init_list(SO_NODES_NUM * 2)) == NULL) {
@@ -447,6 +449,17 @@ int main() {
   /* Inizializzazione semafori start sincronizzato e write del libro mastro */
   sem_id = semget(getpid(), NUM_SEM, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
   TEST_ERROR_AND_FAIL;
+  /*
+  semval.val = 1;
+  semctl(sem_id, ID_MEM, SETVAL, semval);
+  TEST_ERROR_AND_FAIL;
+  semval.val = SO_USERS_NUM + SO_NODES_NUM + 1;
+  semctl(sem_id, ID_READY_ALL, SETVAL, semval);
+  TEST_ERROR_AND_FAIL;
+  semval.val = SO_NODES_NUM + 1;
+  semctl(sem_id, ID_READY_NODE, SETVAL, semval);
+  TEST_ERROR_AND_FAIL;
+  */
   semctl(sem_id, ID_MEM, SETVAL, 1);
   TEST_ERROR_AND_FAIL;
   semctl(sem_id, ID_READY_ALL, SETVAL, SO_USERS_NUM + SO_NODES_NUM + 1);
@@ -484,7 +497,7 @@ int main() {
   users = attach_shm_memory(shm_users_array_id);
   TEST_ERROR_AND_FAIL;
 
-  /* Inizializzazione coda di messaggi master-nodi */
+  /* Inizializzazione coda di mes saggi master-nodi */
   if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
     TEST_ERROR_AND_FAIL;
   }

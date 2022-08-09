@@ -142,7 +142,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
           exit(EXIT_FAILURE);
         }
         else {
-          fprintf(ERR_FILE, "init_user u%d: EGAIN errno recieved: %s.\n", getpid(), strerror(errno));
+          fprintf(ERR_FILE, "init_user u%d: EAGAIN errno recieved: %s.\n", getpid(), strerror(errno));
           cont_try++;
         }
       }
