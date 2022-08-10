@@ -21,7 +21,7 @@
 
 #define SELF_SENDER -1
 #define ACCEPT_TRANSACTION SIGUSR1
-
+/*TODO: il valore di ID_READY_ALL quanto vale? viene preso delle inclusioni?*/
 
 extern int SO_TP_SIZE;
 extern int SO_NUM_FRIENDS;
@@ -31,7 +31,7 @@ extern int SO_HOPS;
 
 /* IPC memories */
 static int queue_id;
-static int pipe_read;
+static int pipe;
 
 static int* friends;
 static int nof_friends;
@@ -54,7 +54,7 @@ static void sig_handler(int sig) {
     node_cleanup();
     fprintf(LOG_FILE, "n%d: killed by parent. Ending successfully\n", getpid());
     exit(nof_transaction);
-  case SIGUSR1:
+  case SIGUSR1:/* massage in queue */
   {
     msgqnum_t msg_num;
     if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
@@ -74,8 +74,6 @@ static void sig_handler(int sig) {
         CHILD_STOP_SIMULATION;
         exit(EXIT_FAILURE);
       }
-
-      bzero(incoming, sizeof(struct msg));
 
       if (msgrcv(queue_id, incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
         TEST_ERROR;
@@ -106,7 +104,7 @@ static void sig_handler(int sig) {
           }
           else {
             fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid());
-          }
+          } 
         }
         else {
           kill(getppid(), SIGQUIT);
@@ -162,7 +160,7 @@ static void sig_handler(int sig) {
   case SIGUSR2:
   {
     int nodo_ricevuto = 0;
-    if (read(pipe_read, &nodo_ricevuto, sizeof(int)) == -1) {
+    if (read(pipe, &nodo_ricevuto, sizeof(int)) == -1) {
       if (errno != EINTR) {
         fprintf(ERR_FILE, "node n%d: recieved an unexpected error while trying to read from pipe: %s\n", getpid(), strerror(errno));
         node_cleanup();
@@ -243,8 +241,7 @@ static void sig_handler(int sig) {
 
 }
 
-static void generate()
-{
+static void generate(){
   sigset_t mask;
   struct sigaction act;
   struct msqid_ds stats;
@@ -319,8 +316,7 @@ static void generate()
   */
 }
 
-static void get_out_of_the_pool()
-{
+static void get_out_of_the_pool(){
   register int i = 0;
   while (i < SO_BLOCK_SIZE - 1)
   {
@@ -373,11 +369,13 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   struct master_book book;
 
   bzero(&sops, sizeof(struct sembuf));
+  bzero(&book, sizeof(struct master_book));
 
   friends = friends_list;
   nof_friends = SO_NUM_FRIENDS;
+  pipe = pipe_read; /*TODO: non c'era LOOOOL*/
 
-  if ((sem_id = semget(getppid(), 0, 0)) == -1) {
+  if ((sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR)) == -1) {
     fprintf(ERR_FILE, "node n%d: error retrieving parent semaphore (%s)\n", getpid(), strerror(errno));
     exit(EXIT_FAILURE);
   }

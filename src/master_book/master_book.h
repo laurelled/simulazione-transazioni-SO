@@ -19,7 +19,7 @@ struct master_book {
 
 struct msg {
   long mtype;
-  transaction mtext;
+  struct transaction mtext;
 };
 
 

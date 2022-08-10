@@ -66,7 +66,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
     exit(EXIT_FAILURE);
   }
 
-  if ((sem_id = semget(getppid(), 0, 0)) == -1) {
+  if ((sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR)) == -1) {
     fprintf(ERR_FILE, "user u%d: err\n", getpid());
     exit(EXIT_FAILURE);
   }
@@ -164,6 +164,8 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
 
 int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 {
+  /*TODO: questo mi puzza di sbagliato nell'assegnazione a blocco raggiunto
+  guardare il primo commento che trovate sotto e pensate se può essere giusto così*/
   int i = *block_reached;
   int size = *book.size;
   while (i < size) {
@@ -177,6 +179,7 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
     i++;
   }
   *block_reached = i / SO_BLOCK_SIZE;
+  /* dovrebbe essere *block_reached = *book.size;*/
   return bilancio;
 }
 
@@ -198,3 +201,7 @@ void usr_handler(int signal) {
     break;
   }
 }
+
+/*TODO: noi al bilancio togliano due volte la stessa transazione inviata: 
+la prima volta con quando generiamo la transazione
+la seconda volta quando leggiamo nel libro mastro*/
