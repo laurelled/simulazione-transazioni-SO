@@ -76,6 +76,8 @@ static int block_reached;
 static int inactive_users;
 static int simulation_seconds = 0;
 
+/*TODO: Chiusura dei file deiscriptor a fine programma nei nodi e nel master*/
+
 void periodical_update() {
   int index;
   transaction t;
@@ -337,7 +339,10 @@ void handler(int signal) {
         nodes.size = attach_shm_memory(shm_nodes_size_id);
         TEST_ERROR_AND_FAIL;
 
-        close(file_descriptors[1]);
+        if(close(file_descriptors[1]) == -1){
+        fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
+        exit(EXIT_FAILURE);
+        }
         friends = assign_friends(nodes.array, *nodes.size);
         if (friends == NULL) {
           CHILD_STOP_SIMULATION;
@@ -350,7 +355,10 @@ void handler(int signal) {
       default:
       {
         int* lista_nodi = init_list(SO_NUM_FRIENDS);
-        close(file_descriptors[0]);
+        if(close(file_descriptors[0]) == -1){
+        fprintf(ERR_FILE, "master: cannot close fd write end");
+        master_cleanup();
+        }
         if (lista_nodi == NULL) {
           TEST_ERROR_AND_FAIL;
         }
@@ -546,7 +554,10 @@ int main() {
         fprintf(ERR_FILE, "u%d: cannot attach nodes shared memory\n", getpid());
         exit(EXIT_FAILURE);
       }
-      close(fd[1]);
+      if(close(fd[1]) == -1){
+        fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
+        exit(EXIT_FAILURE);
+      }
 
       wait_siblings(ID_READY_NODE);
       if ((friends = assign_friends(nodes_arr, SO_NODES_NUM)) == NULL) {
@@ -557,7 +568,10 @@ int main() {
       break;
     }
     default:
-      close(fd[0]);
+      if(close(fd[]) == -1){
+        fprintf(ERR_FILE, "master: cannot close fd read end");
+        master_cleanup();
+      }
       nodes_write_fd[i] = fd[1];
       nodes.array[i] = child;
       i++;
