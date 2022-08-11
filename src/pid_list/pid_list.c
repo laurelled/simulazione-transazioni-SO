@@ -36,7 +36,7 @@ int random_element(int* list, int size) {
   int random_el = 0;
   int found;
 
-  register i = 0;
+  register int i = 0;
   while (i < size) {
     cpy[i] = list[i];
     i++;
