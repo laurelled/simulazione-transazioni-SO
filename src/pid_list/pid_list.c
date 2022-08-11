@@ -35,9 +35,9 @@ int random_element(int* list, int size) {
   int* cpy = malloc(sizeof(int) * size);
   int random_el = 0;
   int found;
-
+  register int dim = size;
   register int i = 0;
-  while (i < size) {
+  while (i < dim) {
     cpy[i] = list[i];
     i++;
   }
@@ -48,28 +48,27 @@ int random_element(int* list, int size) {
     int r_index = 0;
     srand(clock());
     found = 1; /* imposto found a true */
-    r_index = (rand() % size);
+    r_index = (rand() % dim);
     random_el = cpy[r_index];
     if (getpid() == random_el || (kill(random_el, 0) == -1 && errno == ESRCH)) {
-      int temp = random_el;
       found = 0;
-
-      cpy[r_index] = cpy[size - 1];
-      cpy[size - 1] = temp;
-      size--;
+      cpy[r_index] = cpy[dim - 1];
+      cpy[dim - 1] = random_el;
+      dim--;
     }
-  } while (size > 0 && !found); /* evita di estrarre lo stesso processo in cui ci troviamo o di trovare un utente terminato*/
+  } while (dim > 0 && !found); /* evita di estrarre lo stesso processo in cui ci troviamo o di trovare un utente terminato*/
 
   free(cpy);
-  return size > 0 ? random_el : -1;
+  return dim > 0 ? random_el : -1;
 }
 
 int find_element(int* l, int size, int pid) {
   int* ptr = l;
   int index = -1;
-  while (--size > 0 && index != -1) {
-    if (ptr[size] == pid) {
-      index = size;
+  int dim = size;
+  while (--dim > 0 && index != -1) {
+    if (ptr[dim] == pid) {
+      index = dim;
     }
   }
 
