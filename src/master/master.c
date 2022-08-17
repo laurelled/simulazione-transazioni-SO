@@ -79,11 +79,11 @@ static int simulation_seconds = 0;
 void periodical_update() {
   int index;
   transaction t;
-  int i = block_reached;
-  int size = *book.size;
+  int i = block_reached * SO_BLOCK_SIZE;
+  int size = *book.size * SO_BLOCK_SIZE;
 
   while (i < size) {
-    t = book.blocks[i * SO_BLOCK_SIZE];
+    t = book.blocks[i];
     if ((index = find_element(users, SO_USERS_NUM, t.sender)) != -1) {
       user_budget[index] -= (t.quantita + t.reward);
       index = find_element(users, SO_USERS_NUM, t.receiver);
@@ -98,18 +98,28 @@ void periodical_update() {
 }
 
 void stop_simulation() {
+  sigset_t mask;
   int i = 0;
   int child = 0;
+
+
+  bzero(&mask, sizeof(sigset_t));
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
   while ((child = users[i]) != 0 && i < SO_USERS_NUM) {
+    fprintf(ERR_FILE, "master: ottenuto user: %d\n", child);
     i++;
     kill(child, SIGTERM);
   }
+  fprintf(ERR_FILE, "ho finito il ciclo dello stop degli utenti\n");
   i = 0;
   errno = 0;
   while ((child = nodes.array[i]) != 0 && i < *nodes.size) {
+    fprintf(ERR_FILE, "master: ottenuto nodo: %d\n", child);
     i++;
     kill(child, SIGTERM);
   }
+  fprintf(ERR_FILE, "ho finito il ciclo dello stop dei nodi\n");
 }
 
 void master_cleanup() {
@@ -202,7 +212,7 @@ void periodical_print() {
   /* budget di ogni processo nodo */
   i = 0;
   fprintf(LOG_FILE, "NODES BUDGETS\n");
-  while (i < SO_NODES_NUM) {
+  while (i < *nodes.size) {
     fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i++]);
   }
 }
@@ -439,8 +449,6 @@ int main() {
   struct msqid_ds stats;
   int* nodes_array;
   transaction** registry;
-  int* size_nodes;
-  int* size_book;
   int i = 0;
   bzero(&stats, sizeof(struct msqid_ds));
   bzero(&sops, sizeof(struct sembuf));
@@ -489,7 +497,7 @@ int main() {
   TEST_ERROR_AND_FAIL;
 
   /* Inizializzazione libro mastro */
-  shm_book_id = start_shared_memory(IPC_PRIVATE, sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE);
+  shm_book_id = start_shared_memory(IPC_PRIVATE, REGISTRY_SIZE);
   TEST_ERROR_AND_FAIL;
   book.blocks = attach_shm_memory(shm_book_id);
   TEST_ERROR_AND_FAIL;
@@ -497,6 +505,7 @@ int main() {
   TEST_ERROR_AND_FAIL;
   book.size = attach_shm_memory(shm_book_size_id);
   TEST_ERROR_AND_FAIL;
+  *book.size = 0;
 
   /* Inizializzazione shm nodi array */
   shm_nodes_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_NODES_NUM * 2);
@@ -643,7 +652,10 @@ int main() {
     while (simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
-      int terminated_p = wait(&status);
+      int terminated_p;
+      fprintf(LOG_FILE, "master: aspetto che un figlio termini, inactive users: %d\n", inactive_users);
+      terminated_p = wait(&status);
+      fprintf(LOG_FILE, "master: un figlio è terminato\n");
       if (terminated_p == -1) {
         if (errno == EINTR) {
           continue;
@@ -656,7 +668,6 @@ int main() {
           fprintf(ERR_FILE, "Child %d encountered an error. Stopping simulation\n", terminated_p);
           free(nof_transactions);
           master_cleanup();
-
         }
         else {
           if ((node_index = find_element(nodes.array, *nodes.size, terminated_p)) != -1) {
@@ -670,19 +681,14 @@ int main() {
       }
 
     }
+    fprintf(ERR_FILE, "master: sono uscito\n");
     alarm(0);
     stop_simulation();
 
-    while (1) {
-      int status;
+    int terminated_p;
+    int status;
+    while ((terminated_p = wait(&status)) != -1 && errno != EINTR) {
       int index;
-      int terminated_p = wait(&status);
-      if (terminated_p == -1) {
-        if (errno == EINTR) {
-          continue;
-        }
-        TEST_ERROR_AND_FAIL;
-      }
       if ((index = find_element(nodes.array, *nodes.size, terminated_p)) != -1) {
         if (WIFEXITED(status)) {
           int exit_status = 0;
@@ -697,6 +703,8 @@ int main() {
         }
       }
     }
+    if (errno != ECHILD)
+      TEST_ERROR_AND_FAIL;
 
     ending_reason = -1;
     if (simulation_seconds == SO_SIM_SEC) {
@@ -714,14 +722,18 @@ int main() {
     free(nof_transactions);
   }
 
-  if (shmctl(shm_book_id, IPC_RMID, NULL) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_book_id);
-    master_cleanup();
-  }
-  if (shmctl(shm_nodes_array_id, IPC_RMID, NULL) == -1) {
-    fprintf(ERR_FILE, "master: error in shmctl while removing the shm with id %d. Please check ipcs and remove it.\n", shm_nodes_array_id);
-    master_cleanup();
-  }
+  shmctl(shm_book_id, IPC_RMID, NULL);
+  TEST_ERROR;
+  shmctl(shm_book_size_id, IPC_RMID, NULL);
+  TEST_ERROR;
+  shmctl(shm_nodes_size_id, IPC_RMID, NULL);
+  TEST_ERROR;
+  shmctl(shm_users_array_id, IPC_RMID, NULL);
+  TEST_ERROR;
+  shmctl(shm_nodes_array_id, IPC_RMID, NULL);
+  TEST_ERROR;
+  msgctl(queue_id, IPC_RMID, NULL);
+  TEST_ERROR;
 
   if (semctl(sem_id, 0, IPC_RMID) == -1) {
     fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
