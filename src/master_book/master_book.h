@@ -13,6 +13,7 @@ typedef struct
 } transaction;
 
 struct master_book {
+  /* dimensione codificata in numero di blocchi di transazioni */
   int* size;
   transaction* blocks;
 };
