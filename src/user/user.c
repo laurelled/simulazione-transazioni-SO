@@ -164,12 +164,12 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
 
 int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 {
-  /*TODO: questo mi puzza di sbagliato nell'assegnazione a blocco raggiunto
-  guardare il primo commento che trovate sotto e pensate se può essere giusto così*/
-  int i = *block_reached;
-  int size = *book.size;
+  /* block_reached e book.size codificati come indici di blocchi (come se fosse un'array di blocchi)
+    necessaria conversione in indice per l'array nella shm (array di transazioni) */
+  int i = *block_reached * SO_BLOCK_SIZE;
+  int size = *book.size * SO_BLOCK_SIZE;
   while (i < size) {
-    transaction t = book.blocks[i * SO_BLOCK_SIZE];
+    transaction t = book.blocks[i];
     if (t.receiver == getpid()) {
       bilancio += t.quantita;
     }
@@ -178,8 +178,8 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
     }
     i++;
   }
+  /* codifico block_reached come un indice del blocco raggiunto */
   *block_reached = i / SO_BLOCK_SIZE;
-  /* dovrebbe essere *block_reached = *book.size;*/
   return bilancio;
 }
 
@@ -202,6 +202,6 @@ void usr_handler(int signal) {
   }
 }
 
-/*TODO: noi al bilancio togliano due volte la stessa transazione inviata: 
+/*TODO: noi al bilancio togliano due volte la stessa transazione inviata:
 la prima volta con quando generiamo la transazione
 la seconda volta quando leggiamo nel libro mastro*/
