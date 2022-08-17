@@ -30,7 +30,7 @@ extern int SO_HOPS;
 
 /* IPC memories */
 static int queue_id;
-static int pipe;
+static int pipe_fd;
 
 static int* friends;
 static int nof_friends;
@@ -41,8 +41,7 @@ static int nof_transaction;
 
 void node_cleanup() {
   free(transaction_pool);
-  close(pipe);
-  CHILD_STOP_SIMULATION;
+  close(pipe_fd);
   msgctl(queue_id, IPC_RMID, NULL);
 }
 
@@ -51,8 +50,8 @@ static void sig_handler(int sig) {
   bzero(&stats, sizeof(struct msqid_ds));
   switch (sig) {
   case SIGTERM:
-    node_cleanup();
     fprintf(LOG_FILE, "n%d: killed by parent. Ending successfully\n", getpid());
+    node_cleanup();
     exit(nof_transaction);
   case SIGUSR1:/* massage in queue */
   {
@@ -71,7 +70,6 @@ static void sig_handler(int sig) {
       if (incoming == NULL) {
         TEST_ERROR;
         node_cleanup();
-        CHILD_STOP_SIMULATION;
         exit(EXIT_FAILURE);
       }
 
@@ -80,7 +78,7 @@ static void sig_handler(int sig) {
         if (errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
           node_cleanup();
-          CHILD_STOP_SIMULATION;
+
           exit(EXIT_FAILURE);
         }
         continue;
@@ -99,7 +97,7 @@ static void sig_handler(int sig) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             node_cleanup();
-            CHILD_STOP_SIMULATION;
+
             exit(EXIT_FAILURE);
           }
           else {
@@ -107,6 +105,7 @@ static void sig_handler(int sig) {
           }
         }
         else {
+          fprintf(LOG_FILE, "n%d: sending to master a SIGQUIT\n", getpid());
           kill(getppid(), SIGQUIT);
         }
       }
@@ -123,9 +122,6 @@ static void sig_handler(int sig) {
           fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
           node_cleanup();
           exit(EXIT_FAILURE);
-        }
-        else {
-          fprintf(ERR_FILE, "n%d: ottenuta coda del nodo %d con id %d\n", getpid(), chosen_friend, friend_queue);
         }
         incoming->mtype += 1;
         if (msgsnd(friend_queue, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
@@ -160,11 +156,10 @@ static void sig_handler(int sig) {
   case SIGUSR2:
   {
     int nodo_ricevuto = 0;
-    if (read(pipe, &nodo_ricevuto, sizeof(int)) == -1) {
+    if (read(pipe_fd, &nodo_ricevuto, sizeof(int)) == -1) {
       if (errno != EINTR) {
-        fprintf(ERR_FILE, "node n%d: recieved an unexpected error while trying to read from pipe: %s\n", getpid(), strerror(errno));
+        TEST_ERROR;
         node_cleanup();
-
         exit(EXIT_FAILURE);
       }
     };
@@ -172,7 +167,6 @@ static void sig_handler(int sig) {
     if (friends == NULL) {
       fprintf(LOG_FILE, "n%d: expand_list error in SIGUSR2\n", getpid());
       node_cleanup();
-
       exit(EXIT_FAILURE);
     }
     friends[nof_friends++] = nodo_ricevuto;
@@ -206,11 +200,8 @@ static void sig_handler(int sig) {
       if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
         fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
         node_cleanup();
-        CHILD_STOP_SIMULATION;
+
         exit(EXIT_FAILURE);
-      }
-      else {
-        fprintf(ERR_FILE, "n%d: ottenuta coda del nodo %d con id %d\n", getpid(), chosen_friend, friend_queue);
       }
 
       if (msgsnd(friend_queue, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
@@ -321,6 +312,7 @@ static void get_out_of_the_pool() {
   while (i < SO_BLOCK_SIZE - 1)
   {
     transaction_pool[i] = transaction_pool[i + SO_BLOCK_SIZE - 1];
+    i++;
   }
 }
 
@@ -329,6 +321,7 @@ void simulate_processing(struct master_book book, int sem_id) {
   sigset_t mask;
   int i = 0;
   int gain = 0;
+  int block_i = 0;
 
   bzero(&sops, sizeof(struct sembuf));
 
@@ -338,29 +331,35 @@ void simulate_processing(struct master_book book, int sem_id) {
   /* ID_MEM ottenuto tramite master.h */
   sops.sem_num = ID_MEM;
   sops.sem_op = -1;
-  semop(sem_id, &sops, 1);
+  while (semop(sem_id, &sops, 1) == -1) {
+    if (errno != EINTR) {
+      TEST_ERROR;
+      node_cleanup();
+      exit(EXIT_FAILURE);
+    }
+  }
 
+  block_i = *(book.size) * SO_BLOCK_SIZE;
+  /*fprintf(LOG_FILE, "n%d: scrivo blocco nell'index %d\n", getpid(), block_i);*/
   while (i < SO_BLOCK_SIZE)
   {
-    /* setta la posizione di memoria 0x0 a x*/
-    book.blocks[i + *book.size] = transaction_pool[i];
+    book.blocks[i + block_i] = transaction_pool[i];
     gain += transaction_pool[i].reward;
     i++;
   }
   /* transazione di guadagno del nodo */
-  new_transaction(&book.blocks[i + *book.size], SELF_SENDER, getpid(), gain, 0);
-  *book.size += SO_BLOCK_SIZE;
+  new_transaction(&book.blocks[i + block_i], SELF_SENDER, getpid(), gain, 0);
+  *(book.size) += 1;
 
   sops.sem_op = 1;
-  semop(sem_id, &sops, 1);
-
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGTERM);
-
-  sigprocmask(SIG_BLOCK, &mask, NULL);
+  while (semop(sem_id, &sops, 1) == -1) {
+    if (errno != EINTR) {
+      TEST_ERROR;
+      node_cleanup();
+      exit(EXIT_FAILURE);
+    }
+  }
   get_out_of_the_pool();
-  sigprocmask(SIG_UNBLOCK, NULL, &mask);
-
 }
 
 void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_size_id)
@@ -374,7 +373,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
 
   friends = friends_list;
   nof_friends = SO_NUM_FRIENDS;
-  pipe = pipe_read;
+  pipe_fd = pipe_read;
 
   if ((sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR)) == -1) {
     fprintf(ERR_FILE, "node n%d: error retrieving parent semaphore (%s)\n", getpid(), strerror(errno));
