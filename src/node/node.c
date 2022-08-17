@@ -21,7 +21,6 @@
 
 #define SELF_SENDER -1
 #define ACCEPT_TRANSACTION SIGUSR1
-/*TODO: il valore di ID_READY_ALL quanto vale? viene preso delle inclusioni?*/
 
 extern int SO_TP_SIZE;
 extern int SO_NUM_FRIENDS;
@@ -42,6 +41,7 @@ static int nof_transaction;
 
 void node_cleanup() {
   free(transaction_pool);
+  close(pipe);
   CHILD_STOP_SIMULATION;
   msgctl(queue_id, IPC_RMID, NULL);
 }
@@ -104,7 +104,7 @@ static void sig_handler(int sig) {
           }
           else {
             fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid());
-          } 
+          }
         }
         else {
           kill(getppid(), SIGQUIT);
@@ -241,7 +241,7 @@ static void sig_handler(int sig) {
 
 }
 
-static void generate(){
+static void generate() {
   sigset_t mask;
   struct sigaction act;
   struct msqid_ds stats;
@@ -316,7 +316,7 @@ static void generate(){
   */
 }
 
-static void get_out_of_the_pool(){
+static void get_out_of_the_pool() {
   register int i = 0;
   while (i < SO_BLOCK_SIZE - 1)
   {
@@ -334,7 +334,9 @@ void simulate_processing(struct master_book book, int sem_id) {
 
 
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
-  sops.sem_num = 1;
+
+  /* ID_MEM ottenuto tramite master.h */
+  sops.sem_num = ID_MEM;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
@@ -349,7 +351,6 @@ void simulate_processing(struct master_book book, int sem_id) {
   new_transaction(&book.blocks[i + *book.size], SELF_SENDER, getpid(), gain, 0);
   *book.size += SO_BLOCK_SIZE;
 
-  sops.sem_num = 1;
   sops.sem_op = 1;
   semop(sem_id, &sops, 1);
 
@@ -373,7 +374,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
 
   friends = friends_list;
   nof_friends = SO_NUM_FRIENDS;
-  pipe = pipe_read; /*TODO: non c'era LOOOOL*/
+  pipe = pipe_read;
 
   if ((sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR)) == -1) {
     fprintf(ERR_FILE, "node n%d: error retrieving parent semaphore (%s)\n", getpid(), strerror(errno));
@@ -393,6 +394,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
     exit(EXIT_FAILURE);
   }
 
+  /* ID_READY_ALL ottenuto da master.h */
   sops.sem_num = ID_READY_ALL;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
