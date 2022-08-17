@@ -425,7 +425,8 @@ void handler(int signal) {
       TEST_ERROR_AND_FAIL;
 
       kill(child, SIGUSR1);
-      nodes.array[*nodes.size++] = child;
+      nodes.array[*nodes.size] = child;
+      (*nodes.size)++;
     }
     else {
       fprintf(ERR_FILE, "master: transaction refused\n");
