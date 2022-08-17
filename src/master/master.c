@@ -40,7 +40,6 @@
 #define MAX_USERS_TO_PRINT 10
 #define SO_REGISTRY_SIZE 50
 
-#define ID_READY_ALL 0
 #define ID_MEM 1
 #define ID_READY_NODE 2
 #define NUM_SEM 3
@@ -76,7 +75,6 @@ static int block_reached;
 static int inactive_users;
 static int simulation_seconds = 0;
 
-/*TODO: Chiusura dei file deiscriptor a fine programma nei nodi e nel master*/
 
 void periodical_update() {
   int index;
@@ -116,6 +114,7 @@ void stop_simulation() {
 
 void master_cleanup() {
   sigset_t mask;
+  int i = 0;
   alarm(0);
 
   fprintf(ERR_FILE, "master: richiamato master cleanup\n");
@@ -158,6 +157,11 @@ void master_cleanup() {
   if (queue_id != -1) {
     msgctl(queue_id, IPC_RMID, 0);
     TEST_ERROR;
+  }
+
+
+  while (nodes_write_fd[i] != 0) {
+    close(nodes_write_fd[i++]);
   }
 
   exit(EXIT_FAILURE);
@@ -279,157 +283,157 @@ int* assign_friends(int* array, int size) {
 
 void handler(int signal) {
   switch (signal) {
-    case SIGALRM:
-      simulation_seconds++;
-      periodical_update();
-      periodical_print();
-      alarm(1);
-      break;
-    case SIGINT:
-      fprintf(LOG_FILE, "master: recieved a SIGINT at %ds from simulation start\n", simulation_seconds);
+  case SIGALRM:
+    simulation_seconds++;
+    periodical_update();
+    periodical_print();
+    alarm(1);
+    break;
+  case SIGINT:
+    fprintf(LOG_FILE, "master: recieved a SIGINT at %ds from simulation start\n", simulation_seconds);
+    master_cleanup();
+
+    break;
+  case SIGQUIT:
+  {
+    /*TODO: perchè è diventato SIGQUIT?*/
+    int child;
+    struct msg message;
+    transaction arriva;
+    int file_descriptors[2];
+    struct sembuf sops;
+    int new_node_msg_id;
+    int i = 0;
+
+    fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
+
+    fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
+
+    bzero(&sops, sizeof(struct sembuf));
+
+    if (pipe(file_descriptors) == -1) {
+      fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
       master_cleanup();
+    }
+    TEST_ERROR_AND_FAIL;
 
-      break;
-    case SIGQUIT:
-    {
-      /*TODO: perchè è diventato SIGQUIT?*/ 
-      int child;
-      struct msg message;
-      transaction arriva;
-      int file_descriptors[2];
-      struct sembuf sops;
-      int new_node_msg_id;
-      int i = 0;
-
-      fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
-
-      fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
-
-      bzero(&sops, sizeof(struct sembuf));
-
-      if (pipe(file_descriptors) == -1) {
-        fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
+    if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+      if (errno != ENOMSG) {
+        TEST_ERROR_AND_FAIL;
         master_cleanup();
       }
-      TEST_ERROR_AND_FAIL;
-
-      if(msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1){
-        if (errno != ENOMSG) {
-          TEST_ERROR_AND_FAIL;
-          master_cleanup();
-        }
-        else {
-          fprintf(ERR_FILE, "master: no msg in queue\n");
-          errno = 0;
-          break;
-        }
+      else {
+        fprintf(ERR_FILE, "master: no msg in queue\n");
+        errno = 0;
+        break;
       }
-      arriva = message.mtext;
+    }
+    arriva = message.mtext;
 
-      if (*nodes.size < SO_NODES_NUM * 2) {
-        /*TODO: sia nel figlio che nel padre creiamo due liste di amici, non è
-        meglio metterlo prima del fork così da usare come parametro nel figlio e
-        usarlo come strumento per il ciclio a cui inviare i segnali?*/
-        switch ((child = fork())) {
-        case -1:
-          fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
-          CHILD_STOP_SIMULATION;
-          exit(EXIT_FAILURE);
-          break;
-        case 0:
-        {
-          int* friends;
-          struct nodes nodes;
-          /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
-          nodes.array = attach_shm_memory(shm_nodes_array_id);
-          TEST_ERROR_AND_FAIL;
-          nodes.size = attach_shm_memory(shm_nodes_size_id);
-          TEST_ERROR_AND_FAIL;
-
-          if(close(file_descriptors[1]) == -1){
-          fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
-          exit(EXIT_FAILURE);
-          }
-          friends = assign_friends(nodes.array, *nodes.size);
-          if (friends == NULL) {
-            CHILD_STOP_SIMULATION;
-            exit(EXIT_FAILURE);
-          }
-
-          init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
-          break;
-        }
-        default:
-        {
-          int* lista_nodi = init_list(SO_NUM_FRIENDS);
-          if(close(file_descriptors[0]) == -1){
-          fprintf(ERR_FILE, "master: cannot close fd write end");
-          master_cleanup();
-          }
-          if (lista_nodi == NULL) {
-            TEST_ERROR_AND_FAIL;
-          }
-          i = 0;
-          while (i < SO_NUM_FRIENDS) {
-            int node_random = random_element(nodes.array, *nodes.size);
-            if (node_random == -1) {
-              fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
-              master_cleanup();
-            }
-            if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
-              lista_nodi[i++] = node_random;
-              if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
-                TEST_ERROR_AND_FAIL;
-              }
-              fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
-              kill(node_random, SIGUSR2);
-            }
-          }
-          nodes_write_fd[*nodes.size] = file_descriptors[1];
-          break;
-        }
-        }
-
-        sops.sem_num = ID_READY_ALL;
-        sops.sem_op = 1;
-        if (semop(sem_id, &sops, 1) == -1) {
-          TEST_ERROR_AND_FAIL;
-        }
-
-        sops.sem_op = 0;
-        if (semop(sem_id, &sops, 1) == -1) {
-          TEST_ERROR_AND_FAIL;
-        }
-
-        /*msgget del nodo */
-        if ((new_node_msg_id = msgget(child, 0)) == -1) {
-          fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
-          master_cleanup();
-        }
-        /*msgsnd della transaction al nodo */
-        msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
+    if (*nodes.size < SO_NODES_NUM * 2) {
+      /*TODO: sia nel figlio che nel padre creiamo due liste di amici, non è
+      meglio metterlo prima del fork così da usare come parametro nel figlio e
+      usarlo come strumento per il ciclio a cui inviare i segnali?*/
+      switch ((child = fork())) {
+      case -1:
+        fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
+        CHILD_STOP_SIMULATION;
+        exit(EXIT_FAILURE);
+        break;
+      case 0:
+      {
+        int* friends;
+        struct nodes nodes;
+        /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
+        nodes.array = attach_shm_memory(shm_nodes_array_id);
+        TEST_ERROR_AND_FAIL;
+        nodes.size = attach_shm_memory(shm_nodes_size_id);
         TEST_ERROR_AND_FAIL;
 
-        kill(child, SIGUSR1);
-        nodes.array[*nodes.size++] = child;
+        if (close(file_descriptors[1]) == -1) {
+          fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
+          exit(EXIT_FAILURE);
+        }
+        friends = assign_friends(nodes.array, *nodes.size);
+        if (friends == NULL) {
+          CHILD_STOP_SIMULATION;
+          exit(EXIT_FAILURE);
+        }
+
+        init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
+        break;
       }
-      else {
-        fprintf(ERR_FILE, "master: transaction refused\n");
-        kill(arriva.sender, SIGUSR2);
+      default:
+      {
+        int* lista_nodi = init_list(SO_NUM_FRIENDS);
+        if (close(file_descriptors[0]) == -1) {
+          fprintf(ERR_FILE, "master: cannot close fd read end");
+          master_cleanup();
+        }
+        if (lista_nodi == NULL) {
+          TEST_ERROR_AND_FAIL;
+        }
+        i = 0;
+        while (i < SO_NUM_FRIENDS) {
+          int node_random = random_element(nodes.array, *nodes.size);
+          if (node_random == -1) {
+            fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
+            master_cleanup();
+          }
+          if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
+            lista_nodi[i++] = node_random;
+            if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
+              TEST_ERROR_AND_FAIL;
+            }
+            fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
+            kill(node_random, SIGUSR2);
+          }
+        }
+        nodes_write_fd[*nodes.size] = file_descriptors[1];
+        break;
       }
-      break;
+      }
+
+      sops.sem_num = ID_READY_ALL;
+      sops.sem_op = 1;
+      if (semop(sem_id, &sops, 1) == -1) {
+        TEST_ERROR_AND_FAIL;
+      }
+
+      sops.sem_op = 0;
+      if (semop(sem_id, &sops, 1) == -1) {
+        TEST_ERROR_AND_FAIL;
+      }
+
+      /*msgget del nodo */
+      if ((new_node_msg_id = msgget(child, 0)) == -1) {
+        fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
+        master_cleanup();
+      }
+      /*msgsnd della transaction al nodo */
+      msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
+      TEST_ERROR_AND_FAIL;
+
+      kill(child, SIGUSR1);
+      nodes.array[*nodes.size++] = child;
     }
-    default:
-      fprintf(LOG_FILE, "master: signal %d not handled it should be blocked", signal);
-      stop_simulation();
-      master_cleanup();
-      break;
+    else {
+      fprintf(ERR_FILE, "master: transaction refused\n");
+      kill(arriva.sender, SIGUSR2);
+    }
+    break;
+  }
+  default:
+    fprintf(LOG_FILE, "master: signal %d not handled it should be blocked", signal);
+    stop_simulation();
+    master_cleanup();
+    break;
   }
 }
 
 int main() {
   struct sembuf sops;
-  union semun semval;
+  /* union semun semval; */
   sigset_t mask;
   struct sigaction act;
   struct msqid_ds stats;
@@ -563,7 +567,7 @@ int main() {
         fprintf(ERR_FILE, "u%d: cannot attach nodes shared memory\n", getpid());
         exit(EXIT_FAILURE);
       }
-      if(close(fd[1]) == -1){
+      if (close(fd[1]) == -1) {
         fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
         exit(EXIT_FAILURE);
       }
@@ -577,7 +581,7 @@ int main() {
       break;
     }
     default:
-      if(close(fd[0]) == -1){
+      if (close(fd[0]) == -1) {
         fprintf(ERR_FILE, "master: cannot close fd read end");
         master_cleanup();
       }
