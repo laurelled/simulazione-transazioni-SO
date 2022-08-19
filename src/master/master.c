@@ -89,7 +89,8 @@ void periodical_update() {
       index = find_element(users, SO_USERS_NUM, t.receiver);
       user_budget[index] += t.quantita;
     }
-    if ((index = find_element(nodes.array, *nodes.size, t.receiver)) != -1)
+    size = *(nodes.size);
+    if ((index = find_element(nodes.array, size, t.receiver)) != -1)
       node_budget[index] += t.quantita;
     i++;
   }
@@ -99,6 +100,7 @@ void periodical_update() {
 
 void stop_simulation() {
   sigset_t mask;
+  int size;
   int i = 0;
   int child = 0;
 
@@ -114,7 +116,8 @@ void stop_simulation() {
   fprintf(ERR_FILE, "ho finito il ciclo dello stop degli utenti\n");
   i = 0;
   errno = 0;
-  while ((child = nodes.array[i]) != 0 && i < *nodes.size) {
+  size = *(nodes.size);
+  while ((child = nodes.array[i]) != 0 && i < size) {
     fprintf(ERR_FILE, "master: ottenuto nodo: %d\n", child);
     i++;
     kill(child, SIGTERM);
@@ -183,17 +186,17 @@ int  start_shared_memory(int key, size_t size) {
 
 void periodical_print() {
   int i = 0;
-  fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d\n", SO_USERS_NUM - inactive_users, *nodes.size);
+  fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d\n", (SO_USERS_NUM - inactive_users), *(nodes.size));
   /* budget di ogni processo utente (inclusi quelli terminati prematuramente)*/
   fprintf(LOG_FILE, "USERS BUDGETS\n");
   if (SO_USERS_NUM < MAX_USERS_TO_PRINT) {
     while (i < SO_USERS_NUM) {
-      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
+      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
+      i++;
     }
   }
   else {
-    int min_i = 0;
-    int max_i = 0;
+    int min_i = 0, max_i = 0;
     fprintf(LOG_FILE, "[!] Users count is too high to display all budgets [!]\n");
     i = 1;
     while (i < SO_NODES_NUM) {
@@ -209,15 +212,20 @@ void periodical_print() {
     fprintf(LOG_FILE, "HIGHEST BUDGET: USER u%d : %d$\n", users[max_i], user_budget[max_i]);
     fprintf(LOG_FILE, "LOWEST BUDGET: USER u%d : %d$\n", users[min_i], user_budget[min_i]);
   }
-  /* budget di ogni processo nodo */
-  i = 0;
-  fprintf(LOG_FILE, "NODES BUDGETS\n");
-  while (i < *nodes.size) {
-    fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i++]);
+
+  {
+    int size = *(nodes.size);
+    int i = 0;
+    /* budget di ogni processo nodo */
+    fprintf(LOG_FILE, "NODES BUDGETS\n");
+    while (i < size) {
+      fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
+      i++;
+    }
   }
 }
 
-void summary_print(int ending_reason, int* users, int* user_budget, int* nodes, int* node_budget, int* nof_transactions) {
+void summary_print(int ending_reason, int* users, int* user_budget, struct nodes nodes, int* node_budget, int* nof_transactions) {
   int i = 0;
 
   switch (ending_reason)
@@ -230,6 +238,7 @@ void summary_print(int ending_reason, int* users, int* user_budget, int* nodes, 
     break;
   case SIM_END_USR:
     fprintf(LOG_FILE, "[!] Simulation ending reason: ALL USERS TERMINATED [!]\n\n");
+    break;
   default:
     fprintf(LOG_FILE, "[!] Simulation ending reason: UNEXPECTED ERRORS [!]\n\n");
     break;
@@ -242,8 +251,9 @@ void summary_print(int ending_reason, int* users, int* user_budget, int* nodes, 
   /* bilancio di ogni processo nodo */
   i = 0;
   fprintf(LOG_FILE, "NODES BUDGETS\n");
-  while (i < SO_NODES_NUM) {
-    fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes[i], node_budget[i++]);
+  while (i < *nodes.size) {
+    fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
+    i++;
   }
   fprintf(LOG_FILE, "NUMBER OF INACTIVE USERS: %d\n", inactive_users);
   fprintf(LOG_FILE, "NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n", *book.size);
@@ -251,8 +261,9 @@ void summary_print(int ending_reason, int* users, int* user_budget, int* nodes, 
   fprintf(LOG_FILE, "\n\n");
 
   fprintf(LOG_FILE, "Number of transactions left per node:\n");
-  while (i < SO_NODES_NUM) {
-    fprintf(LOG_FILE, "NODE %d: %d transactions left\n", nodes[i], nof_transactions[i]);
+  i = 0;
+  while (i < *nodes.size) {
+    fprintf(LOG_FILE, "NODE %d: %d transactions left\n", nodes.array[i], nof_transactions[i]);
     i++;
   }
 }
@@ -294,6 +305,7 @@ int* assign_friends(int* array, int size) {
 void handler(int signal) {
   switch (signal) {
   case SIGALRM:
+    fprintf(ERR_FILE, "master: SIGALRM\n");
     simulation_seconds++;
     periodical_update();
     periodical_print();
@@ -304,9 +316,14 @@ void handler(int signal) {
     master_cleanup();
 
     break;
+  case SIGUSR2:
+    fprintf(ERR_FILE, "[%ld] master: sono stato notificato da un nodo che la size è stata superata\n", clock() / CLOCKS_PER_SEC);
+    break;
   case SIGQUIT:
   {
-    /*TODO: perchè è diventato SIGQUIT?*/
+    fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
+    break;
+
     int child;
     struct msg message;
     transaction arriva;
@@ -318,7 +335,6 @@ void handler(int signal) {
     fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
 
     fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
-
     bzero(&sops, sizeof(struct sembuf));
 
     if (pipe(file_descriptors) == -1) {
@@ -340,7 +356,7 @@ void handler(int signal) {
     }
     arriva = message.mtext;
 
-    if (*nodes.size < SO_NODES_NUM * 2) {
+    if (*(nodes.size) < SO_NODES_NUM * 2) {
       /*TODO: sia nel figlio che nel padre creiamo due liste di amici, non è
       meglio metterlo prima del fork così da usare come parametro nel figlio e
       usarlo come strumento per il ciclio a cui inviare i segnali?*/
@@ -355,20 +371,23 @@ void handler(int signal) {
         int* friends;
         struct nodes nodes;
         /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
-        nodes.array = attach_shm_memory(shm_nodes_array_id);
+        nodes.array = attach_shm_memory(shm_nodes_array_id, SHM_RDONLY);
         TEST_ERROR_AND_FAIL;
-        nodes.size = attach_shm_memory(shm_nodes_size_id);
+        nodes.size = attach_shm_memory(shm_nodes_size_id, SHM_RDONLY);
         TEST_ERROR_AND_FAIL;
 
         if (close(file_descriptors[1]) == -1) {
           fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
           exit(EXIT_FAILURE);
         }
-        friends = assign_friends(nodes.array, *nodes.size);
+        friends = assign_friends(nodes.array, *(nodes.size));
         if (friends == NULL) {
           CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
+
+        shmdt(nodes.array);
+        shmdt(nodes.size);
 
         init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
         break;
@@ -385,7 +404,7 @@ void handler(int signal) {
         }
         i = 0;
         while (i < SO_NUM_FRIENDS) {
-          int node_random = random_element(nodes.array, *nodes.size);
+          int node_random = random_element(nodes.array, *(nodes.size));
           if (node_random == -1) {
             fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
             master_cleanup();
@@ -399,7 +418,7 @@ void handler(int signal) {
             kill(node_random, SIGUSR2);
           }
         }
-        nodes_write_fd[*nodes.size] = file_descriptors[1];
+        nodes_write_fd[*(nodes.size)] = file_descriptors[1];
         break;
       }
       }
@@ -425,15 +444,15 @@ void handler(int signal) {
       TEST_ERROR_AND_FAIL;
 
       kill(child, SIGUSR1);
-      nodes.array[*nodes.size] = child;
-      (*nodes.size)++;
+      nodes.array[(*(nodes.size))] = child;
+      (*(nodes.size))++;
     }
     else {
       fprintf(ERR_FILE, "master: transaction refused\n");
       kill(arriva.sender, SIGUSR2);
     }
-    break;
   }
+  break;
   default:
     fprintf(LOG_FILE, "master: signal %d not handled it should be blocked", signal);
     stop_simulation();
@@ -500,33 +519,38 @@ int main() {
   /* Inizializzazione libro mastro */
   shm_book_id = start_shared_memory(IPC_PRIVATE, REGISTRY_SIZE);
   TEST_ERROR_AND_FAIL;
-  book.blocks = attach_shm_memory(shm_book_id);
+  book.blocks = attach_shm_memory(shm_book_id, 0);
   TEST_ERROR_AND_FAIL;
   shm_book_size_id = start_shared_memory(IPC_PRIVATE, sizeof(int));
   TEST_ERROR_AND_FAIL;
-  book.size = attach_shm_memory(shm_book_size_id);
+  book.size = attach_shm_memory(shm_book_size_id, 0);
   TEST_ERROR_AND_FAIL;
   *book.size = 0;
 
-  /* Inizializzazione shm nodi array */
-  shm_nodes_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_NODES_NUM * 2);
+  /* Inizializzazione shm users array */
+  shm_users_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_USERS_NUM);
   TEST_ERROR_AND_FAIL;
-  nodes.array = attach_shm_memory(shm_nodes_array_id);
+  users = attach_shm_memory(shm_users_array_id, 0);
   TEST_ERROR_AND_FAIL;
 
   /* Inizializzazione shm per size dei nodi */
   shm_nodes_size_id = start_shared_memory(IPC_PRIVATE, sizeof(int));
   TEST_ERROR_AND_FAIL;
-  nodes.size = attach_shm_memory(shm_nodes_size_id);
+  nodes.size = attach_shm_memory(shm_nodes_size_id, 0);
   TEST_ERROR_AND_FAIL;
 
-  *nodes.size = SO_NODES_NUM;
+  *(nodes.size) = SO_NODES_NUM;
 
-  /* Inizializzazione shm users array */
-  shm_users_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_USERS_NUM);
+  /* Inizializzazione shm nodi array */
+  shm_nodes_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_NODES_NUM * 2);
   TEST_ERROR_AND_FAIL;
-  users = attach_shm_memory(shm_users_array_id);
+  nodes.array = attach_shm_memory(shm_nodes_array_id, 0);
   TEST_ERROR_AND_FAIL;
+  i = 0;
+  while (i < SO_NODES_NUM * 2) {
+    nodes.array[i] = 0;
+    i++;
+  }
 
   /* Inizializzazione coda di mes saggi master-nodi */
   if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
@@ -554,6 +578,10 @@ int main() {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
     master_cleanup();
   }
+  if (sigaction(SIGUSR2, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGUSR2.\n");
+    master_cleanup();
+  }
   /* Fine handling segnali */
 
   i = 0;
@@ -573,7 +601,7 @@ int main() {
     {
       int* friends;
       int* nodes_arr;
-      if ((nodes_arr = attach_shm_memory(shm_nodes_array_id)) == NULL) {
+      if ((nodes_arr = attach_shm_memory(shm_nodes_array_id, SHM_RDONLY)) == NULL) {
         fprintf(ERR_FILE, "u%d: cannot attach nodes shared memory\n", getpid());
         exit(EXIT_FAILURE);
       }
@@ -587,6 +615,8 @@ int main() {
         fprintf(ERR_FILE, "master: cannot assign friends to node %d\n", getpid());
         exit(EXIT_FAILURE);
       }
+
+      shmdt(nodes_arr);
       init_node(friends, fd[0], shm_book_id, shm_book_size_id);
       break;
     }
@@ -622,7 +652,7 @@ int main() {
     case 0:
     {
       int* users;
-      if ((users = attach_shm_memory(shm_users_array_id)) == NULL) {
+      if ((users = attach_shm_memory(shm_users_array_id, SHM_RDONLY)) == NULL) {
         fprintf(ERR_FILE, "u%d: cannot attach users shared memory\n", getpid());
         exit(EXIT_FAILURE);
       }
@@ -656,14 +686,15 @@ int main() {
       int terminated_p;
       fprintf(LOG_FILE, "master: aspetto che un figlio termini, inactive users: %d\n", inactive_users);
       terminated_p = wait(&status);
-      fprintf(LOG_FILE, "master: un figlio è terminato\n");
       if (terminated_p == -1) {
         if (errno == EINTR) {
+          fprintf(ERR_FILE, "master: sono stato interrotto mentre aspettavo un figlio\n");
           continue;
         }
         fprintf(ERR_FILE, "master: wait failed for an unexpected error: %s\n", strerror(errno));
         master_cleanup();
       }
+      fprintf(LOG_FILE, "master: un figlio è terminato\n");
       if (WIFEXITED(status)) {
         if (WEXITSTATUS(status) == EXIT_FAILURE) {
           fprintf(ERR_FILE, "Child %d encountered an error. Stopping simulation\n", terminated_p);
@@ -671,7 +702,8 @@ int main() {
           master_cleanup();
         }
         else {
-          if ((node_index = find_element(nodes.array, *nodes.size, terminated_p)) != -1) {
+          int size = *(nodes.size);
+          if ((node_index = find_element(nodes.array, size, terminated_p)) != -1) {
             fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
             master_cleanup();
           }
@@ -682,6 +714,13 @@ int main() {
       }
 
     }
+    {
+      sigset_t mask;
+      bzero(&mask, sizeof(sigset_t));
+      sigemptyset(&mask);
+      sigaddset(&mask, SIGUSR2);
+      sigprocmask(SIG_BLOCK, &mask, NULL);
+    }
     fprintf(ERR_FILE, "master: sono uscito\n");
     alarm(0);
     stop_simulation();
@@ -689,29 +728,33 @@ int main() {
     int terminated_p;
     int status;
     while ((terminated_p = wait(&status)) != -1 && errno != EINTR) {
-      int index;
-      if ((index = find_element(nodes.array, *nodes.size, terminated_p)) != -1) {
+      int index, size;
+      size = *(nodes.size);
+      if ((index = find_element(nodes.array, size, terminated_p)) != -1) {
+        fprintf(ERR_FILE, "master: child %d was a node\n", terminated_p);
         if (WIFEXITED(status)) {
           int exit_status = 0;
-          switch (exit_status = WEXITSTATUS(status)) {
+          switch ((exit_status = WEXITSTATUS(status))) {
           case EXIT_FAILURE:
             nof_transactions[index] = -1;
             break;
           default:
+            fprintf(ERR_FILE, "master: added %d as the nof_transaction to index %d for the node %d\n", exit_status, index, nodes.array[i]);
             nof_transactions[index] = exit_status;
             break;
           }
         }
       }
     }
-    if (errno != ECHILD)
+    if (errno != ECHILD) {
       TEST_ERROR_AND_FAIL;
+    }
 
     ending_reason = -1;
     if (simulation_seconds == SO_SIM_SEC) {
       ending_reason = SIM_END_SEC;
     }
-    else if (SO_USERS_NUM == 0) {
+    else if (inactive_users == SO_USERS_NUM) {
       ending_reason = SIM_END_USR;
     }
     else if (*book.size == SO_REGISTRY_SIZE) {
@@ -719,9 +762,10 @@ int main() {
     }
 
     periodical_update();
-    summary_print(ending_reason, users, user_budget, nodes.array, node_budget, nof_transactions);
+    summary_print(ending_reason, users, user_budget, nodes, node_budget, nof_transactions);
     free(nof_transactions);
   }
+  errno = 0;
 
   shmctl(shm_book_id, IPC_RMID, NULL);
   TEST_ERROR;
