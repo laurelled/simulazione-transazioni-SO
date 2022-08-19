@@ -314,17 +314,14 @@ static void get_out_of_the_pool() {
     transaction_pool[i] = transaction_pool[i + SO_BLOCK_SIZE - 1];
     i++;
   }
+  nof_transaction -= SO_BLOCK_SIZE - 1;
 }
 
 void simulate_processing(struct master_book book, int sem_id) {
   struct sembuf sops;
   sigset_t mask;
-  int i = 0;
-  int gain = 0;
-  int block_i = 0;
 
   bzero(&sops, sizeof(struct sembuf));
-
 
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
 
@@ -339,17 +336,27 @@ void simulate_processing(struct master_book book, int sem_id) {
     }
   }
 
-  block_i = *(book.size) * SO_BLOCK_SIZE;
-  /*fprintf(LOG_FILE, "n%d: scrivo blocco nell'index %d\n", getpid(), block_i);*/
-  while (i < SO_BLOCK_SIZE)
   {
-    book.blocks[i + block_i] = transaction_pool[i];
-    gain += transaction_pool[i].reward;
-    i++;
+    int i = 0, gain = 0, block_i, size;
+    size = *book.size;
+    if (size < SO_REGISTRY_SIZE) {
+      block_i = (*book.size) * SO_BLOCK_SIZE;
+      /*fprintf(LOG_FILE, "n%d: scrivo blocco nell'index %d\n", getpid(), block_i);*/
+      while (i < SO_BLOCK_SIZE)
+      {
+        book.blocks[i + block_i] = transaction_pool[i];
+        gain += transaction_pool[i].reward;
+        i++;
+      }
+      /* transazione di guadagno del nodo */
+      new_transaction(&book.blocks[i + block_i], SELF_SENDER, getpid(), gain, 0);
+      (*book.size)++;
+    }
+    else {
+      fprintf(ERR_FILE, "[%ld] n%d: master book maximum capacity reached, notifying master.\n", clock() / CLOCKS_PER_SEC, getpid());
+      kill(getppid(), SIGUSR2);
+    }
   }
-  /* transazione di guadagno del nodo */
-  new_transaction(&book.blocks[i + block_i], SELF_SENDER, getpid(), gain, 0);
-  *(book.size) += 1;
 
   sops.sem_op = 1;
   while (semop(sem_id, &sops, 1) == -1) {
@@ -381,13 +388,13 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   }
 
   generate();
-  if ((book.blocks = attach_shm_memory(shm_book_id)) == NULL) {
+  if ((book.blocks = attach_shm_memory(shm_book_id, 0)) == NULL) {
     fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
     node_cleanup();
     exit(EXIT_FAILURE);
   }
 
-  if ((book.size = attach_shm_memory(shm_book_size_id)) == NULL) {
+  if ((book.size = attach_shm_memory(shm_book_size_id, 0)) == NULL) {
     fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
     node_cleanup();
     exit(EXIT_FAILURE);
@@ -406,7 +413,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   while (1)
   {
     transaction* block = NULL;
-    if (nof_transaction < SO_BLOCK_SIZE) {
+    if (nof_transaction < SO_BLOCK_SIZE - 1) {
       pause();
       continue;
     }
