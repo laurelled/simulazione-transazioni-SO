@@ -18,10 +18,20 @@ struct master_book {
   transaction* blocks;
 };
 
+struct text {
+  int hops;
+  transaction transaction;
+}
+
 struct msg {
   long mtype;
-  transaction mtext;
+  text mtext;
 };
+
+/*struct msg {
+  long mtype;
+  transaction mtext;
+};*/
 
 
 void* attach_shm_memory(int shm_id, int flags);
