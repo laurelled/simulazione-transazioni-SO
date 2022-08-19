@@ -24,7 +24,7 @@ struct msg {
 };
 
 
-void* attach_shm_memory(int shm_id);
+void* attach_shm_memory(int shm_id, int flags);
 void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);
 void print_transaction(transaction t);
 

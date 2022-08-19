@@ -38,9 +38,9 @@ void print_transaction(transaction t) {
   fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
 }
 
-void* attach_shm_memory(int shm_id) {
+void* attach_shm_memory(int shm_id, int flags) {
   void* new = NULL;
-  if ((new = shmat(shm_id, NULL, 0)) == (void*)-1) {
+  if ((new = shmat(shm_id, NULL, flags)) == (void*)-1) {
     return NULL;
   }
   return new;
