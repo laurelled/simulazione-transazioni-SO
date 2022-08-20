@@ -146,8 +146,8 @@ void master_cleanup() {
     TEST_ERROR;
   }
 
-  if (shm_book_id != -1) {
-    shmctl(shm_book_id, IPC_RMID, 0);
+  if (shm_book_size_id != -1) {
+    shmctl(shm_book_size_id, IPC_RMID, 0);
     TEST_ERROR;
   }
 
@@ -158,6 +158,11 @@ void master_cleanup() {
 
   if (shm_nodes_size_id != -1) {
     shmctl(shm_nodes_size_id, IPC_RMID, 0);
+    TEST_ERROR;
+  }
+  
+  if (shm_users_array_id != -1) {
+    shmctl(shm_users_array_id, IPC_RMID, 0);
     TEST_ERROR;
   }
 
@@ -439,7 +444,6 @@ void handler(int signal) {
               if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
                 TEST_ERROR_AND_FAIL;
               }
-              fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
               kill(node_random, SIGUSR2);
             }
           }

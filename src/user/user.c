@@ -142,12 +142,11 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       message->mtext = t;
       if (msgsnd(queue_id, message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "[%ld] init_user u%d: recieved an unexpected error while sending transaction at queu with id %d of node %d: %s.\n", clock() / CLOCKS_PER_SEC, getpid(), queue_id, random_node, strerror(errno));
+          fprintf(ERR_FILE, "[%ld] init_user u%d: recieved an unexpected error while sending transaction at queue with id %d of node %d: %s.\n", clock() / CLOCKS_PER_SEC, getpid(), queue_id, random_node, strerror(errno));
           CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
         else {
-          fprintf(ERR_FILE, "init_user u%d: EAGAIN errno recieved: %s.\n", getpid(), strerror(errno));
           cont_try++;
         }
       }
@@ -196,7 +195,7 @@ void usr_handler(int signal) {
       TEST_ERROR;
       exit(EXIT_FAILURE);
     }
-    if (msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT)) {
+    if (msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
       if (errno != ENOMSG) {
         TEST_ERROR;
         exit(EXIT_FAILURE);
@@ -208,8 +207,8 @@ void usr_handler(int signal) {
     fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try));
     cont_try++;
 
-    break;
   }
+  break;
   case SIGUSR2:
     break;
   case SIGTERM:

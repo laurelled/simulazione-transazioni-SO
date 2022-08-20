@@ -86,7 +86,6 @@ static void sig_handler(int sig) {
       /*gestione invio transazione al master se SO_HOPS raggiunti */
       if (incoming->mtype == SO_HOPS + 1) {
         int master_q = 0;
-        fprintf(ERR_FILE, "n%d: cerco di ottenere la coda del padre\n", getpid());
         if ((master_q = msgget(getppid(), 0)) == -1) {
           fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
           node_cleanup();
@@ -101,11 +100,10 @@ static void sig_handler(int sig) {
             exit(EXIT_FAILURE);
           }
           else {
-            fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid());
+            /* fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid()); */
           }
         }
         else {
-          fprintf(LOG_FILE, "n%d: sending to master a SIGUSR1\n", getpid());
           kill(getppid(), SIGUSR1);
         }
       }
