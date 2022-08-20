@@ -20,7 +20,6 @@
 #include <errno.h>
 
 #define SELF_SENDER -1
-#define ACCEPT_TRANSACTION SIGUSR1
 
 extern int SO_TP_SIZE;
 extern int SO_NUM_FRIENDS;
@@ -93,6 +92,7 @@ static void sig_handler(int sig) {
           node_cleanup();
           exit(EXIT_FAILURE);
         }
+        incoming->mtype = getppid();
         if (msgsnd(master_q, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
@@ -142,7 +142,6 @@ static void sig_handler(int sig) {
           exit(EXIT_FAILURE);
         }
         else {
-          kill(t.sender, ACCEPT_TRANSACTION);
           transaction_pool[nof_transaction++] = t;
         }
         /*
@@ -342,7 +341,7 @@ void simulate_processing(struct master_book book, int sem_id) {
     if (size < SO_REGISTRY_SIZE) {
       block_i = (*book.size) * SO_BLOCK_SIZE;
       /*fprintf(LOG_FILE, "n%d: scrivo blocco nell'index %d\n", getpid(), block_i);*/
-      while (i < SO_BLOCK_SIZE)
+      while (i < SO_BLOCK_SIZE - 1)
       {
         book.blocks[i + block_i] = transaction_pool[i];
         gain += transaction_pool[i].reward;

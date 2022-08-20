@@ -27,6 +27,7 @@ extern int SO_RETRY;
 extern int SO_MIN_TRANS_GEN_NSEC;
 extern int SO_MAX_TRANS_GEN_NSEC;
 
+static int bilancio_corrente;
 static int cont_try = 0;
 
 void usr_handler(int);
@@ -40,7 +41,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
   struct master_book book;
 
   struct sembuf sops;
-  int bilancio_corrente = SO_BUDGET_INIT;
+  bilancio_corrente = SO_BUDGET_INIT;
   int block_reached = 0;
   int i = 0;
   struct sigaction sa;
@@ -99,7 +100,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
       transaction t;
       /* estrazione di un destinatario casuale*/
       /* estrazione di un nodo casuale*/
-      int cifra_utente, random_user, random_node, num, reward;
+      int cifra_utente, random_user, random_node, total_quantity, reward;
       struct msg* message = malloc(sizeof(struct msg));
       if (message == NULL) {
         TEST_ERROR;
@@ -122,11 +123,11 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
 
       /* generazione di un importo da inviare*/
       srand(getpid() + clock());
-      num = (rand() % (bilancio_corrente - 2 + 1)) + 2;
-      reward = num / 100 * SO_REWARD;
+      total_quantity = (rand() % (bilancio_corrente - 2 + 1)) + 2;
+      reward = total_quantity / 100 * SO_REWARD;
       if (reward == 0)
         reward = 1;
-      cifra_utente = num - reward;
+      cifra_utente = total_quantity - reward;
 
       /* system V message queue */
       /* ricerca della coda di messaggi del nodo random */
@@ -152,7 +153,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
         }
       }
       else {
-        bilancio_corrente -= (t.quantita + t.reward);
+        bilancio_corrente -= total_quantity;
         kill(random_node, SIGUSR1);
       }
       free(message);
@@ -179,9 +180,6 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
     if (t.receiver == getpid()) {
       bilancio += t.quantita;
     }
-    else if (t.sender == getpid()) {
-      bilancio -= (t.quantita + t.reward);
-    }
     i++;
   }
   /* codifico block_reached come un indice del blocco raggiunto */
@@ -192,12 +190,30 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 void usr_handler(int signal) {
   switch (signal) {
   case SIGUSR1:
-    break;
-  case SIGUSR2:
   {
-    fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try++));
+    int transaction_q = 0;
+    struct msg incoming;
+    transaction refused_t;
+    if ((transaction_q = msgget(getppid(), 0)) == -1) {
+      TEST_ERROR;
+      exit(EXIT_FAILURE);
+    }
+    if (msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT)) {
+      if (errno != ENOMSG) {
+        TEST_ERROR;
+        exit(EXIT_FAILURE);
+      }
+      fprintf(ERR_FILE, "u%d: no msg was found with my pid type\n", getpid());
+    }
+    refused_t = incoming.mtext;
+    bilancio_corrente += (refused_t.quantita + refused_t.reward);
+    fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try));
+    cont_try++;
+
     break;
   }
+  case SIGUSR2:
+    break;
   case SIGTERM:
     /* fprintf(LOG_FILE, "u%d: killed by parent. Ending successfully\n", getpid()); */
     exit(EXIT_SUCCESS);

@@ -35,7 +35,11 @@ void new_transaction(transaction* new, int sender, int reciever, int quantita, i
 }
 
 void print_transaction(transaction t) {
-  fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
+  if (t.sender != -1)
+    fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
+  else
+    fprintf(LOG_FILE, "TS %ld, n%d, %d$\n", t.timestamp, t.receiver, t.quantita);
+
 }
 
 void* attach_shm_memory(int shm_id, int flags) {

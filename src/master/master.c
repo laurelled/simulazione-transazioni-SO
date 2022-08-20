@@ -82,20 +82,26 @@ void periodical_update() {
   int i = block_reached * SO_BLOCK_SIZE;
   int size = *book.size * SO_BLOCK_SIZE;
 
+  fprintf(ERR_FILE, "block_reached=%d, size=%d\n", block_reached, size);
   while (i < size) {
     t = book.blocks[i];
+    fprintf(ERR_FILE, "i=%d ", i);
+    print_transaction(t);
     if ((index = find_element(users, SO_USERS_NUM, t.sender)) != -1) {
       user_budget[index] -= (t.quantita + t.reward);
       index = find_element(users, SO_USERS_NUM, t.receiver);
       user_budget[index] += t.quantita;
     }
-    size = *(nodes.size);
-    if ((index = find_element(nodes.array, size, t.receiver)) != -1)
-      node_budget[index] += t.quantita;
+    if (t.sender == -1) {
+      int nodes_size = *(nodes.size);
+      int index = find_element(nodes.array, nodes_size, t.receiver);
+      node_budget[index] = t.quantita;
+    }
     i++;
   }
 
   block_reached = i / SO_BLOCK_SIZE;
+  fprintf(ERR_FILE, "i=%d, block_reached=%d\n", i, block_reached);
 }
 
 void stop_simulation() {
@@ -326,7 +332,7 @@ void handler(int signal) {
 
     int child;
     struct msg message;
-    transaction arriva;
+    transaction incoming_t;
     int file_descriptors[2];
     struct sembuf sops;
     int new_node_msg_id;
@@ -343,7 +349,7 @@ void handler(int signal) {
     }
     TEST_ERROR_AND_FAIL;
 
-    if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+    if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
       if (errno != ENOMSG) {
         TEST_ERROR_AND_FAIL;
         master_cleanup();
@@ -354,7 +360,7 @@ void handler(int signal) {
         break;
       }
     }
-    arriva = message.mtext;
+    incoming_t = message.mtext;
 
     if (*(nodes.size) < SO_NODES_NUM * 2) {
       /*TODO: sia nel figlio che nel padre creiamo due liste di amici, non è
@@ -448,8 +454,12 @@ void handler(int signal) {
       (*(nodes.size))++;
     }
     else {
-      fprintf(ERR_FILE, "master: transaction refused\n");
-      kill(arriva.sender, SIGUSR2);
+      int sender = incoming_t.sender;
+      fprintf(ERR_FILE, "master: transaction refused, sending transaction back to u%d\n", sender);
+      message.mtype = sender;
+      msgsnd(queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
+      TEST_ERROR_AND_FAIL;
+      kill(sender, SIGUSR1);
     }
   }
   break;
