@@ -105,8 +105,8 @@ static void sig_handler(int sig) {
           }
         }
         else {
-          fprintf(LOG_FILE, "n%d: sending to master a SIGQUIT\n", getpid());
-          kill(getppid(), SIGQUIT);
+          fprintf(LOG_FILE, "n%d: sending to master a SIGUSR1\n", getpid());
+          kill(getppid(), SIGUSR1);
         }
       }
       /*gestione transaction_pool piena */

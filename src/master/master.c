@@ -38,7 +38,6 @@
 #define SIM_END_SIZ 2
 
 #define MAX_USERS_TO_PRINT 10
-#define SO_REGISTRY_SIZE 50
 
 #define ID_MEM 1
 #define ID_READY_NODE 2
@@ -82,11 +81,8 @@ void periodical_update() {
   int i = block_reached * SO_BLOCK_SIZE;
   int size = *book.size * SO_BLOCK_SIZE;
 
-  fprintf(ERR_FILE, "block_reached=%d, size=%d\n", block_reached, size);
   while (i < size) {
     t = book.blocks[i];
-    fprintf(ERR_FILE, "i=%d ", i);
-    print_transaction(t);
     if ((index = find_element(users, SO_USERS_NUM, t.sender)) != -1) {
       user_budget[index] -= (t.quantita + t.reward);
       index = find_element(users, SO_USERS_NUM, t.receiver);
@@ -101,7 +97,6 @@ void periodical_update() {
   }
 
   block_reached = i / SO_BLOCK_SIZE;
-  fprintf(ERR_FILE, "i=%d, block_reached=%d\n", i, block_reached);
 }
 
 void stop_simulation() {
@@ -115,7 +110,6 @@ void stop_simulation() {
   sigemptyset(&mask);
   sigaddset(&mask, SIGINT);
   while ((child = users[i]) != 0 && i < SO_USERS_NUM) {
-    fprintf(ERR_FILE, "master: ottenuto user: %d\n", child);
     i++;
     kill(child, SIGTERM);
   }
@@ -124,7 +118,6 @@ void stop_simulation() {
   errno = 0;
   size = *(nodes.size);
   while ((child = nodes.array[i]) != 0 && i < size) {
-    fprintf(ERR_FILE, "master: ottenuto nodo: %d\n", child);
     i++;
     kill(child, SIGTERM);
   }
@@ -251,8 +244,33 @@ void summary_print(int ending_reason, int* users, int* user_budget, struct nodes
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
   fprintf(LOG_FILE, "USERS BUDGETS\n");
-  while (i < SO_USERS_NUM) {
-    fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
+  /*
+    while (i < SO_USERS_NUM) {
+      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
+    }
+  */
+  if (SO_USERS_NUM < MAX_USERS_TO_PRINT) {
+    while (i < SO_USERS_NUM) {
+      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
+      i++;
+    }
+  }
+  else {
+    int min_i = 0, max_i = 0;
+    fprintf(LOG_FILE, "[!] Users count is too high to display all budgets [!]\n");
+    i = 1;
+    while (i < SO_NODES_NUM) {
+      if (user_budget[i] < user_budget[min_i]) {
+        min_i = i;
+      }
+      if (user_budget[i] > user_budget[max_i]) {
+        max_i = i;
+      }
+      i++;
+    }
+
+    fprintf(LOG_FILE, "HIGHEST BUDGET: USER u%d : %d$\n", users[max_i], user_budget[max_i]);
+    fprintf(LOG_FILE, "LOWEST BUDGET: USER u%d : %d$\n", users[min_i], user_budget[min_i]);
   }
   /* bilancio di ogni processo nodo */
   i = 0;
@@ -311,7 +329,6 @@ int* assign_friends(int* array, int size) {
 void handler(int signal) {
   switch (signal) {
   case SIGALRM:
-    fprintf(ERR_FILE, "master: SIGALRM\n");
     simulation_seconds++;
     periodical_update();
     periodical_print();
@@ -325,11 +342,8 @@ void handler(int signal) {
   case SIGUSR2:
     fprintf(ERR_FILE, "[%ld] master: sono stato notificato da un nodo che la size è stata superata\n", clock() / CLOCKS_PER_SEC);
     break;
-  case SIGQUIT:
+  case SIGUSR1:
   {
-    fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
-    break;
-
     int child;
     struct msg message;
     transaction incoming_t;
@@ -340,7 +354,6 @@ void handler(int signal) {
 
     fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
 
-    fprintf(ERR_FILE, "ricevuto SIGQUIT\n");
     bzero(&sops, sizeof(struct sembuf));
 
     if (pipe(file_descriptors) == -1) {
@@ -363,9 +376,6 @@ void handler(int signal) {
     incoming_t = message.mtext;
 
     if (*(nodes.size) < SO_NODES_NUM * 2) {
-      /*TODO: sia nel figlio che nel padre creiamo due liste di amici, non è
-      meglio metterlo prima del fork così da usare come parametro nel figlio e
-      usarlo come strumento per il ciclio a cui inviare i segnali?*/
       switch ((child = fork())) {
       case -1:
         fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
@@ -584,7 +594,7 @@ int main() {
     fprintf(ERR_FILE, "master: could not associate handler to SIGINT.\n");
     master_cleanup();
   }
-  if (sigaction(SIGQUIT, &act, NULL) < 0) {
+  if (sigaction(SIGUSR1, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
     master_cleanup();
   }
@@ -694,7 +704,6 @@ int main() {
       int status = 0;
       int node_index = 0;
       int terminated_p;
-      fprintf(LOG_FILE, "master: aspetto che un figlio termini, inactive users: %d\n", inactive_users);
       terminated_p = wait(&status);
       if (terminated_p == -1) {
         if (errno == EINTR) {
@@ -704,7 +713,6 @@ int main() {
         fprintf(ERR_FILE, "master: wait failed for an unexpected error: %s\n", strerror(errno));
         master_cleanup();
       }
-      fprintf(LOG_FILE, "master: un figlio è terminato\n");
       if (WIFEXITED(status)) {
         if (WEXITSTATUS(status) == EXIT_FAILURE) {
           fprintf(ERR_FILE, "Child %d encountered an error. Stopping simulation\n", terminated_p);

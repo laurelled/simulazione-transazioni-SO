@@ -107,7 +107,6 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
         CHILD_STOP_SIMULATION;
         exit(EXIT_FAILURE);
       }
-      fprintf(ERR_FILE, "u%d: bilancio corrente=%d\n", getpid(), bilancio_corrente);
       random_user = random_element(users, SO_USERS_NUM);
       if (random_user == -1) {
         fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
@@ -165,7 +164,6 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
     /*tempo di attesa dopo l'invio di una transazione*/
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
   }
-  fprintf(ERR_FILE, "u%d: esco\n", getpid());
   exit(EARLY_FAILURE);
 }
 

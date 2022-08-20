@@ -1,7 +1,7 @@
 #ifndef _TRANSACTION_H_
 #define _TRANSACTION_H_
 
-#define SO_BLOCK_SIZE 3
+#define SO_BLOCK_SIZE 10
 
 typedef struct
 {
