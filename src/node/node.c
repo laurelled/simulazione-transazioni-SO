@@ -162,12 +162,6 @@ static void sig_handler(int sig) {
         exit(EXIT_FAILURE);
       }
     };
-    friends = expand_list(friends, nof_friends, nof_friends + 1);
-    if (friends == NULL) {
-      fprintf(LOG_FILE, "n%d: expand_list error in SIGUSR2\n", getpid());
-      node_cleanup();
-      exit(EXIT_FAILURE);
-    }
     friends[nof_friends++] = nodo_ricevuto;
     fprintf(ERR_FILE, "n%d: recieved SIGUSR2 from master. Added friend %d\n", getpid(), nodo_ricevuto);
     break;

@@ -305,8 +305,8 @@ void wait_siblings(int sem_num) {
 }
 
 int* assign_friends(int* array, int size) {
-  int* friends = init_list(SO_NUM_FRIENDS);
   int i = 0;
+  int* friends = init_list(SO_NODES_NUM * 2 - 1);
   if (friends == NULL)
     return NULL;
 
@@ -346,130 +346,144 @@ void handler(int signal) {
   {
     int child;
     struct msg message;
+    struct msqid_ds stats;
     transaction incoming_t;
-    int file_descriptors[2];
+    msgqnum_t msg_num;
     struct sembuf sops;
-    int new_node_msg_id;
-    int i = 0;
-
-    fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
 
     bzero(&sops, sizeof(struct sembuf));
+    bzero(&stats, sizeof(struct sembuf));
 
-    if (pipe(file_descriptors) == -1) {
-      fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
-      master_cleanup();
-    }
+    fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
+    msgctl(queue_id, IPC_STAT, &stats);
     TEST_ERROR_AND_FAIL;
 
-    if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
-      if (errno != ENOMSG) {
-        TEST_ERROR_AND_FAIL;
+    msg_num = stats.msg_qnum;
+    /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
+    while (msg_num-- > 0) {
+      int file_descriptors[2];
+      int new_node_msg_id;
+      int i = 0;
+
+      if (pipe(file_descriptors) == -1) {
+        fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
         master_cleanup();
       }
-      else {
-        fprintf(ERR_FILE, "master: no msg in queue\n");
-        errno = 0;
-        break;
-      }
-    }
-    incoming_t = message.mtext;
+      TEST_ERROR_AND_FAIL;
 
-    if (*(nodes.size) < SO_NODES_NUM * 2) {
-      switch ((child = fork())) {
-      case -1:
-        fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
-        CHILD_STOP_SIMULATION;
-        exit(EXIT_FAILURE);
-        break;
-      case 0:
-      {
-        int* friends;
-        struct nodes nodes;
-        /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
-        nodes.array = attach_shm_memory(shm_nodes_array_id, SHM_RDONLY);
-        TEST_ERROR_AND_FAIL;
-        nodes.size = attach_shm_memory(shm_nodes_size_id, SHM_RDONLY);
-        TEST_ERROR_AND_FAIL;
-
-        if (close(file_descriptors[1]) == -1) {
-          fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
-          exit(EXIT_FAILURE);
-        }
-        friends = assign_friends(nodes.array, *(nodes.size));
-        if (friends == NULL) {
-          CHILD_STOP_SIMULATION;
-          exit(EXIT_FAILURE);
-        }
-
-        shmdt(nodes.array);
-        shmdt(nodes.size);
-
-        init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
-        break;
-      }
-      default:
-      {
-        int* lista_nodi = init_list(SO_NUM_FRIENDS);
-        if (close(file_descriptors[0]) == -1) {
-          fprintf(ERR_FILE, "master: cannot close fd read end");
+      if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
+        if (errno != ENOMSG) {
+          TEST_ERROR_AND_FAIL;
           master_cleanup();
         }
-        if (lista_nodi == NULL) {
-          TEST_ERROR_AND_FAIL;
+        else {
+          fprintf(ERR_FILE, "master: no msg in queue\n");
+          errno = 0;
+          break;
         }
-        i = 0;
-        while (i < SO_NUM_FRIENDS) {
-          int node_random = random_element(nodes.array, *(nodes.size));
-          if (node_random == -1) {
-            fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
+      }
+      incoming_t = message.mtext;
+
+      if (*(nodes.size) < SO_NODES_NUM * 2) {
+        switch ((child = fork())) {
+        case -1:
+          fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
+          CHILD_STOP_SIMULATION;
+          exit(EXIT_FAILURE);
+          break;
+        case 0:
+        {
+          int* friends;
+          struct nodes nodes;
+          /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
+          nodes.array = attach_shm_memory(shm_nodes_array_id, SHM_RDONLY);
+          TEST_ERROR_AND_FAIL;
+          nodes.size = attach_shm_memory(shm_nodes_size_id, SHM_RDONLY);
+          TEST_ERROR_AND_FAIL;
+
+          if (close(file_descriptors[1]) == -1) {
+            fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
+            exit(EXIT_FAILURE);
+          }
+          friends = assign_friends(nodes.array, *(nodes.size));
+          if (friends == NULL) {
+            CHILD_STOP_SIMULATION;
+            exit(EXIT_FAILURE);
+          }
+
+          shmdt(nodes.array);
+          shmdt(nodes.size);
+
+          init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
+          break;
+        }
+        default:
+        {
+          int* lista_nodi = init_list(SO_NUM_FRIENDS);
+          if (close(file_descriptors[0]) == -1) {
+            fprintf(ERR_FILE, "master: cannot close fd read end");
             master_cleanup();
           }
-          if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
-            lista_nodi[i++] = node_random;
-            if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
-              TEST_ERROR_AND_FAIL;
-            }
-            fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
-            kill(node_random, SIGUSR2);
+          if (lista_nodi == NULL) {
+            TEST_ERROR_AND_FAIL;
           }
+          i = 0;
+          while (i < SO_NUM_FRIENDS) {
+            int node_random = random_element(nodes.array, *(nodes.size));
+            if (node_random == -1) {
+              fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
+              master_cleanup();
+            }
+            if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
+              lista_nodi[i++] = node_random;
+              if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
+                TEST_ERROR_AND_FAIL;
+              }
+              fprintf(LOG_FILE, "master: ho notificato nodo %d di aggiungere un amico\n", node_random);
+              kill(node_random, SIGUSR2);
+            }
+          }
+          nodes_write_fd[*(nodes.size)] = file_descriptors[1];
+          free(lista_nodi);
         }
-        nodes_write_fd[*(nodes.size)] = file_descriptors[1];
+        break;
+        }
+
+        sops.sem_num = ID_READY_ALL;
+        sops.sem_op = 1;
+        if (semop(sem_id, &sops, 1) == -1) {
+          TEST_ERROR_AND_FAIL;
+        }
+
+        sops.sem_op = 0;
+        if (semop(sem_id, &sops, 1) == -1) {
+          TEST_ERROR_AND_FAIL;
+        }
+
+        /*msgget del nodo */
+        if ((new_node_msg_id = msgget(child, 0)) == -1) {
+          fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
+          master_cleanup();
+        }
+        /*msgsnd della transaction al nodo */
+        msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
+        TEST_ERROR_AND_FAIL;
+
+        kill(child, SIGUSR1);
+        nodes.array[(*(nodes.size))] = child;
+        (*(nodes.size))++;
+      }
+      else {
+        int sender = incoming_t.sender;
+        fprintf(ERR_FILE, "master: transaction refused, sending transaction back to u%d\n", sender);
+        if (kill(sender, 0) != -1) {
+          message.mtype = sender;
+          msgsnd(queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
+          TEST_ERROR_AND_FAIL;
+          kill(sender, SIGUSR1);
+        }
         break;
       }
-      }
-
-      sops.sem_num = ID_READY_ALL;
-      sops.sem_op = 1;
-      if (semop(sem_id, &sops, 1) == -1) {
-        TEST_ERROR_AND_FAIL;
-      }
-
-      sops.sem_op = 0;
-      if (semop(sem_id, &sops, 1) == -1) {
-        TEST_ERROR_AND_FAIL;
-      }
-
-      /*msgget del nodo */
-      if ((new_node_msg_id = msgget(child, 0)) == -1) {
-        fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
-        master_cleanup();
-      }
-      /*msgsnd della transaction al nodo */
-      msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
-      TEST_ERROR_AND_FAIL;
-
-      kill(child, SIGUSR1);
-      nodes.array[(*(nodes.size))] = child;
-      (*(nodes.size))++;
-    }
-    else {
-      int sender = incoming_t.sender;
-      fprintf(ERR_FILE, "master: transaction refused, sending transaction back to u%d\n", sender);
-      message.mtype = sender;
-      msgsnd(queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
-      TEST_ERROR_AND_FAIL;
-      kill(sender, SIGUSR1);
     }
   }
   break;
@@ -583,7 +597,7 @@ int main() {
   bzero(&mask, sizeof(sigset_t));
   sigemptyset(&mask);
   act.sa_handler = handler;
-  act.sa_flags = SA_NODEFER;
+  act.sa_flags = 0;
   act.sa_mask = mask;
 
   if (sigaction(SIGALRM, &act, NULL) < 0) {
