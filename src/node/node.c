@@ -49,7 +49,6 @@ static void sig_handler(int sig) {
   bzero(&stats, sizeof(struct msqid_ds));
   switch (sig) {
   case SIGTERM:
-    fprintf(LOG_FILE, "n%d: killed by parent. Ending successfully\n", getpid());
     node_cleanup();
     exit(nof_transaction);
   case SIGUSR1:/* massage in queue */
@@ -159,9 +158,10 @@ static void sig_handler(int sig) {
         node_cleanup();
         exit(EXIT_FAILURE);
       }
+      errno = 0;
     };
     friends[nof_friends++] = nodo_ricevuto;
-    fprintf(ERR_FILE, "n%d: recieved SIGUSR2 from master. Added friend %d\n", getpid(), nodo_ricevuto);
+    /* fprintf(ERR_FILE, "n%d: recieved SIGUSR2 from master. Added friend %d\n", getpid(), nodo_ricevuto);*/
     break;
   }
   /*gestione invio transazione periodico*/
@@ -183,7 +183,6 @@ static void sig_handler(int sig) {
       chosen_friend = random_element(friends, nof_friends);
       if (chosen_friend == -1) {
         fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
-
         node_cleanup();
         exit(EXIT_FAILURE);
       }
@@ -191,7 +190,6 @@ static void sig_handler(int sig) {
       if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
         fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
         node_cleanup();
-
         exit(EXIT_FAILURE);
       }
 
@@ -209,7 +207,7 @@ static void sig_handler(int sig) {
       }
       sigprocmask(SIG_UNBLOCK, &mask, NULL);
     }
-    alarm(3);
+    alarm(1);
     break;
   }
   case SIGSEGV:
@@ -245,6 +243,7 @@ static void generate() {
   if (SO_BLOCK_SIZE >= SO_TP_SIZE) {
     fprintf(LOG_FILE, "init_node: SO_BLOCK_SIZE >= SO_TP_SIZE. Check environmental config.\n");
     free(transaction_pool);
+    CHILD_STOP_SIMULATION;
     exit(EXIT_FAILURE);
   }
 
@@ -313,9 +312,15 @@ void simulate_processing(struct master_book book, int sem_id) {
   sigset_t mask;
 
   bzero(&sops, sizeof(struct sembuf));
+  bzero(&mask, sizeof(sigset_t));
 
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
 
+
+
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGUSR1);
+  sigprocmask(SIG_BLOCK, &mask, NULL);
   /* ID_MEM ottenuto tramite master.h */
   sops.sem_num = ID_MEM;
   sops.sem_op = -1;
@@ -325,6 +330,7 @@ void simulate_processing(struct master_book book, int sem_id) {
       node_cleanup();
       exit(EXIT_FAILURE);
     }
+    errno = 0;
   }
 
   {
@@ -356,8 +362,10 @@ void simulate_processing(struct master_book book, int sem_id) {
       node_cleanup();
       exit(EXIT_FAILURE);
     }
+    errno = 0;
   }
   get_out_of_the_pool();
+  sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
 
 void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_size_id)
@@ -408,7 +416,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
       pause();
       continue;
     }
-    alarm(3);
+    alarm(1);
     simulate_processing(book, sem_id);
 
     free(block);

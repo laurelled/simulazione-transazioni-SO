@@ -32,11 +32,11 @@ void free_list(int* l) {
 }
 
 int random_element(int* list, int size) {
+  int random_el = 0, found = 0, dim = size;
   int* cpy = malloc(sizeof(int) * size);
   if (cpy == NULL) {
     return -1;
   }
-  int random_el = 0, found = 0, dim = size;
 
   {
     register i = 0;

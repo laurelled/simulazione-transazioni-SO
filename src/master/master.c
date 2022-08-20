@@ -78,25 +78,25 @@ static int simulation_seconds = 0;
 void periodical_update() {
   int index;
   transaction t;
-  int i = block_reached * SO_BLOCK_SIZE;
   int size = *book.size * SO_BLOCK_SIZE;
 
-  while (i < size) {
-    t = book.blocks[i];
-    if ((index = find_element(users, SO_USERS_NUM, t.sender)) != -1) {
-      user_budget[index] -= (t.quantita + t.reward);
-      index = find_element(users, SO_USERS_NUM, t.receiver);
-      user_budget[index] += t.quantita;
-    }
+  while (block_reached < size) {
+    t = book.blocks[block_reached];
     if (t.sender == -1) {
       int nodes_size = *(nodes.size);
       int index = find_element(nodes.array, nodes_size, t.receiver);
-      node_budget[index] = t.quantita;
+      node_budget[index] += t.quantita;
     }
-    i++;
+    else {
+      int total_quantity = t.quantita + t.reward;
+      index = find_element(users, SO_USERS_NUM, t.sender);
+      user_budget[index] -= total_quantity;
+      index = find_element(users, SO_USERS_NUM, t.receiver);
+      user_budget[index] += t.quantita;
+    }
+    block_reached++;
   }
 
-  block_reached = i / SO_BLOCK_SIZE;
 }
 
 void stop_simulation() {
@@ -160,7 +160,7 @@ void master_cleanup() {
     shmctl(shm_nodes_size_id, IPC_RMID, 0);
     TEST_ERROR;
   }
-  
+
   if (shm_users_array_id != -1) {
     shmctl(shm_users_array_id, IPC_RMID, 0);
     TEST_ERROR;
@@ -249,34 +249,10 @@ void summary_print(int ending_reason, int* users, int* user_budget, struct nodes
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
   fprintf(LOG_FILE, "USERS BUDGETS\n");
-  /*
-    while (i < SO_USERS_NUM) {
-      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
-    }
-  */
-  if (SO_USERS_NUM < MAX_USERS_TO_PRINT) {
-    while (i < SO_USERS_NUM) {
-      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
-      i++;
-    }
+  while (i < SO_USERS_NUM) {
+    fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
   }
-  else {
-    int min_i = 0, max_i = 0;
-    fprintf(LOG_FILE, "[!] Users count is too high to display all budgets [!]\n");
-    i = 1;
-    while (i < SO_NODES_NUM) {
-      if (user_budget[i] < user_budget[min_i]) {
-        min_i = i;
-      }
-      if (user_budget[i] > user_budget[max_i]) {
-        max_i = i;
-      }
-      i++;
-    }
 
-    fprintf(LOG_FILE, "HIGHEST BUDGET: USER u%d : %d$\n", users[max_i], user_budget[max_i]);
-    fprintf(LOG_FILE, "LOWEST BUDGET: USER u%d : %d$\n", users[min_i], user_budget[min_i]);
-  }
   /* bilancio di ogni processo nodo */
   i = 0;
   fprintf(LOG_FILE, "NODES BUDGETS\n");
@@ -358,6 +334,7 @@ void handler(int signal) {
 
     bzero(&sops, sizeof(struct sembuf));
     bzero(&stats, sizeof(struct sembuf));
+    errno = 0;
 
     fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
     msgctl(queue_id, IPC_STAT, &stats);
@@ -479,14 +456,12 @@ void handler(int signal) {
       }
       else {
         int sender = incoming_t.sender;
-        fprintf(ERR_FILE, "master: transaction refused, sending transaction back to u%d\n", sender);
         if (kill(sender, 0) != -1) {
           message.mtype = sender;
           msgsnd(queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
           TEST_ERROR_AND_FAIL;
           kill(sender, SIGUSR1);
         }
-        break;
       }
     }
   }
@@ -711,13 +686,20 @@ int main() {
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 
-  fprintf(LOG_FILE, "master: inizio il ciclo principale\n");
   {
+    int i = 0;
     int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM * 2);
     int ending_reason;
+    if (nof_transactions == NULL) {
+      TEST_ERROR_AND_FAIL;
+    }
+    while (i < SO_NODES_NUM * 2) {
+      nof_transactions[i++] = 0;
+    }
 
-    int i = 0;
     alarm(1);
+    i = 0;
+    fprintf(LOG_FILE, "master: inizio il ciclo principale\n");
     while (simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
@@ -725,7 +707,6 @@ int main() {
       terminated_p = wait(&status);
       if (terminated_p == -1) {
         if (errno == EINTR) {
-          fprintf(ERR_FILE, "master: sono stato interrotto mentre aspettavo un figlio\n");
           continue;
         }
         fprintf(ERR_FILE, "master: wait failed for an unexpected error: %s\n", strerror(errno));
@@ -754,6 +735,7 @@ int main() {
       sigset_t mask;
       bzero(&mask, sizeof(sigset_t));
       sigemptyset(&mask);
+      sigaddset(&mask, SIGUSR1);
       sigaddset(&mask, SIGUSR2);
       sigprocmask(SIG_BLOCK, &mask, NULL);
     }
@@ -761,23 +743,26 @@ int main() {
     alarm(0);
     stop_simulation();
 
-    int terminated_p;
-    int status;
-    while ((terminated_p = wait(&status)) != -1 && errno != EINTR) {
-      int index, size;
-      size = *(nodes.size);
-      if ((index = find_element(nodes.array, size, terminated_p)) != -1) {
-        fprintf(ERR_FILE, "master: child %d was a node\n", terminated_p);
-        if (WIFEXITED(status)) {
-          int exit_status = 0;
-          switch ((exit_status = WEXITSTATUS(status))) {
-          case EXIT_FAILURE:
-            nof_transactions[index] = -1;
-            break;
-          default:
-            fprintf(ERR_FILE, "master: added %d as the nof_transaction to index %d for the node %d\n", exit_status, index, nodes.array[i]);
-            nof_transactions[index] = exit_status;
-            break;
+    {
+      int terminated_p;
+      int status;
+      int size = *(nodes.size);
+      while ((terminated_p = wait(&status)) != -1 && errno != EINTR) {
+        int index;
+        if ((index = find_element(nodes.array, size, terminated_p)) != -1) {
+          if (WIFEXITED(status)) {
+            int exit_status = 0;
+            switch ((exit_status = WEXITSTATUS(status))) {
+            case EXIT_FAILURE:
+              nof_transactions[index] = -1;
+              break;
+            default:
+              if (index == 0) {
+                fprintf(ERR_FILE, "master: exit status for node at index 0 = %d\n", exit_status);
+              }
+              nof_transactions[index] = exit_status;
+              break;
+            }
           }
         }
       }

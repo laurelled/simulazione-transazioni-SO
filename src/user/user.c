@@ -41,12 +41,11 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
   struct master_book book;
 
   struct sembuf sops;
-  bilancio_corrente = SO_BUDGET_INIT;
   int block_reached = 0;
-  int i = 0;
   struct sigaction sa;
   int queue_id;
   sigset_t mask;
+  bilancio_corrente = SO_BUDGET_INIT;
   bzero(&sops, sizeof(struct sembuf));
   sigemptyset(&mask);
   sigaddset(&mask, SIGINT);
@@ -113,7 +112,6 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
         exit(EXIT_SUCCESS);
       }
       size = *(nodes.size);
-      i++;
       random_node = random_element(nodes.array, size);
       if (random_node == -1) {
         fprintf(ERR_FILE, "init_user u%d: all nodes have terminated, cannot send transaction.\n", getpid());
@@ -204,7 +202,7 @@ void usr_handler(int signal) {
     }
     refused_t = incoming.mtext;
     bilancio_corrente += (refused_t.quantita + refused_t.reward);
-    fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try));
+    /* fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try)); */
     cont_try++;
 
   }
