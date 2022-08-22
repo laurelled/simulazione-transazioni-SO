@@ -71,11 +71,12 @@ int random_element(int* list, int size) {
 int find_element(int* l, int size, int pid) {
   int* ptr = l;
   int index = -1;
-  int dim = size;
-  while (--dim > 0 && index == -1) {
-    if (ptr[dim] == pid) {
-      index = dim;
+  int i = 0;
+  while (i < size && index == -1) {
+    if (ptr[i] == pid) {
+      index = i;
     }
+    i++;
   }
 
   return index;
