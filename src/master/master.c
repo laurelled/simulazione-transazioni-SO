@@ -354,7 +354,6 @@ void handler(int signal) {
     while (msg_num-- > 0) {
       int file_descriptors[2];
       int new_node_msg_id;
-      int size = *(nodes.size);
 
       if (pipe(file_descriptors) == -1) {
         TEST_ERROR_AND_FAIL;
@@ -373,7 +372,7 @@ void handler(int signal) {
       }
       incoming_t = message.mtext;
 
-      if (size < MAX_NODES) {
+      if (*(nodes.size) < MAX_NODES) {
         switch ((child = fork())) {
         case -1:
           fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
@@ -390,15 +389,13 @@ void handler(int signal) {
           nodes.size = attach_shm_memory(shm_nodes_size_id, SHM_RDONLY);
           TEST_ERROR_AND_FAIL;
 
-          while (close(file_descriptors[1]) == -1) {
-            if (errno != EINTR) {
-              TEST_ERROR;
-              exit(EXIT_FAILURE);
-            }
+          if (close(file_descriptors[1]) == -1) {
+            fprintf(ERR_FILE, "n%d: cannot close fd write end\n<", getpid());
+            exit(EXIT_FAILURE);
           }
-          errno = 0;
           friends = assign_friends(nodes.array, *(nodes.size));
           if (friends == NULL) {
+            CHILD_STOP_SIMULATION;
             exit(EXIT_FAILURE);
           }
 
@@ -409,43 +406,11 @@ void handler(int signal) {
           sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
           init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
+          break;
         }
         default:
           break;
         }
-
-        {
-          int* lista_nodi = init_list(SO_NUM_FRIENDS);
-          int i = 0;
-          while (close(file_descriptors[0]) == -1) {
-            if (errno != EINTR) {
-              TEST_ERROR_AND_FAIL;
-            }
-          }
-          errno = 0;
-
-          while (i < SO_NUM_FRIENDS) {
-            int node_random = random_element(nodes.array, size);
-            if (node_random == -1) {
-              fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
-              master_cleanup();
-            }
-            if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
-              int index = find_element(nodes.array, size, node_random);
-              lista_nodi[i] = node_random;
-              while (write(nodes_write_fd[index], &child, sizeof(int)) == -1) {
-                if (errno != EINTR) {
-                  TEST_ERROR_AND_FAIL;
-                }
-              }
-              kill(node_random, SIGUSR2);
-              i++;
-            }
-          }
-          free_list(lista_nodi);
-        }
-        nodes_write_fd[size] = file_descriptors[1];
-
         sops.sem_num = ID_READY_ALL;
         sops.sem_op = 1;
         while (semop(sem_id, &sops, 1) == -1 && errno == EINTR);
@@ -461,6 +426,33 @@ void handler(int signal) {
         }
         errno = 0;
 
+        {
+          int* lista_nodi = init_list(SO_NUM_FRIENDS);
+          int i = 0;
+          if (close(file_descriptors[0]) == -1) {
+            fprintf(ERR_FILE, "master: cannot close fd read end\n");
+            master_cleanup();
+          }
+          while (i < SO_NUM_FRIENDS) {
+            int node_random = random_element(nodes.array, *(nodes.size));
+            if (node_random == -1) {
+              fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
+              master_cleanup();
+            }
+            if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
+              lista_nodi[i] = node_random;
+              if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
+                TEST_ERROR_AND_FAIL;
+              }
+              kill(node_random, SIGUSR2);
+              i++;
+            }
+          }
+          free_list(lista_nodi);
+        }
+        nodes_write_fd[*(nodes.size)] = file_descriptors[1];
+
+
         /*msgget del nodo */
         new_node_msg_id = msgget(child, 0);
         TEST_ERROR_AND_FAIL;
@@ -471,7 +463,7 @@ void handler(int signal) {
         kill(child, SIGUSR1);
         TEST_ERROR;
 
-        nodes.array[size] = child;
+        nodes.array[*(nodes.size)] = child;
         (*nodes.size)++;
       }
       else {
