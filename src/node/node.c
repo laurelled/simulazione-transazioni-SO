@@ -71,14 +71,13 @@ static void sig_handler(int sig) {
       }
 
       if (msgrcv(queue_id, incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
-        TEST_ERROR;
         if (errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
           node_cleanup();
 
           exit(EXIT_FAILURE);
         }
-        continue;
+        break;
       }
       t = incoming->mtext;
       /*gestione invio transazione al master se SO_HOPS raggiunti */

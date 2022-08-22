@@ -90,9 +90,9 @@ void periodical_update() {
     else {
       int total_quantity = t.quantita + t.reward;
       index = find_element(users, SO_USERS_NUM, t.sender);
-      user_budget[index] -= total_quantity;
+      user_budget[index] = user_budget[index] - total_quantity;
       index = find_element(users, SO_USERS_NUM, t.receiver);
-      user_budget[index] += t.quantita;
+      user_budget[index] = user_budget[index] + t.quantita;
     }
     block_reached++;
   }
@@ -178,7 +178,9 @@ void master_cleanup() {
 
 
   while (nodes_write_fd[i] != 0) {
-    close(nodes_write_fd[i++]);
+    close(nodes_write_fd[i]);
+    TEST_ERROR;
+    i++;
   }
 
   exit(EXIT_FAILURE);
@@ -249,8 +251,9 @@ void summary_print(int ending_reason, int* users, int* user_budget, struct nodes
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
   fprintf(LOG_FILE, "USERS BUDGETS\n");
-  while (i < SO_USERS_NUM) {
-    fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i++]);
+  while(i < SO_USERS_NUM) {
+    fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
+    i++;
   }
 
   /* bilancio di ogni processo nodo */
@@ -301,7 +304,8 @@ int* assign_friends(int* array, int size) {
     /* se trova un pid già inserito, estrae un altro pid */
     if (find_element(friends, SO_NUM_FRIENDS, random_el) != -1)
       continue;
-    friends[i++] = random_el;
+    friends[i] = random_el;
+    i++;
   }
 
   return friends;
@@ -352,9 +356,9 @@ void handler(int signal) {
       int new_node_msg_id;
 
       if (pipe(file_descriptors) == -1) {
+        TEST_ERROR_AND_FAIL;
         master_cleanup();
       }
-      TEST_ERROR_AND_FAIL;
 
       if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
         if (errno != ENOMSG) {
@@ -409,7 +413,7 @@ void handler(int signal) {
         }
 
         {
-          int lista_nodi[SO_NUM_FRIENDS];
+          int* lista_nodi = init_list(SO_NUM_FRIENDS);
           int i = 0;
           if (close(file_descriptors[0]) == -1) {
             fprintf(ERR_FILE, "master: cannot close fd read end\n");
@@ -430,6 +434,7 @@ void handler(int signal) {
               i++;
             }
           }
+          free_list(lista_nodi);
         }
         nodes_write_fd[*(nodes.size)] = file_descriptors[1];
 
@@ -453,9 +458,6 @@ void handler(int signal) {
         TEST_ERROR_AND_FAIL;
         /*msgsnd della transaction al nodo */
         msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
-        TEST_ERROR_AND_FAIL;
-        struct msqid_ds new_node_stats;
-        msgctl(new_node_msg_id, IPC_STAT, &new_node_stats);
         TEST_ERROR_AND_FAIL;
 
         kill(child, SIGUSR1);
@@ -514,7 +516,8 @@ int main() {
   }
 
   while (i < SO_USERS_NUM) {
-    user_budget[i++] = SO_BUDGET_INIT;
+    user_budget[i] = SO_BUDGET_INIT;
+    i++;
   }
 
   fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
@@ -682,9 +685,11 @@ int main() {
       break;
     }
     default:
-      users[i++] = child;
+      users[i] = child;
+      i++;
       break;
     }
+  
   }
 
   sops.sem_num = ID_READY_ALL;
@@ -702,7 +707,8 @@ int main() {
       TEST_ERROR_AND_FAIL;
     }
     while (i < MAX_NODES) {
-      nof_transactions[i++] = 0;
+      nof_transactions[i] = 0;
+      i++;
     }
 
     alarm(1);
@@ -745,7 +751,7 @@ int main() {
       sigaddset(&mask, SIGUSR2);
       sigprocmask(SIG_BLOCK, &mask, NULL);
     }
-    fprintf(ERR_FILE, "master: sono uscito\n");
+    fprintf(ERR_FILE, "[%ld] master: sono uscito\n", clock() / CLOCKS_PER_SEC);
     alarm(0);
     stop_simulation();
 

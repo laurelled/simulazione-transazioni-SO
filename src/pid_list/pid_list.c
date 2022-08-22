@@ -8,7 +8,8 @@ int* init_list(int size) {
   if (new != NULL) {
     int i = 0;
     while (i < size) {
-      new[i++] = 0;
+      new[i] = 0;
+      i++;
     }
   }
 
@@ -21,7 +22,8 @@ int* expand_list(int* l, int old_size, int new_size) {
   if (expanded != NULL) {
     int i = old_size;
     while (i < new_size) {
-      expanded[i++] = 0;
+      expanded[i] = 0;
+      i++;
     }
   }
   return expanded;
