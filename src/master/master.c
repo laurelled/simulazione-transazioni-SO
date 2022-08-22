@@ -287,7 +287,7 @@ void wait_siblings(int sem_num) {
 
 int* assign_friends(int* array, int size) {
   int i = 0;
-  int* friends = init_list(SO_NODES_NUM * 2 - 1);
+  int* friends = init_list(MAX_NODES - 1);
   if (friends == NULL)
     return NULL;
 
@@ -331,12 +331,17 @@ void handler(int signal) {
     transaction incoming_t;
     msgqnum_t msg_num;
     struct sembuf sops;
+    sigset_t mask;
+
+    bzero(&mask, sizeof(sigset_t));
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &mask, NULL);
 
     bzero(&sops, sizeof(struct sembuf));
     bzero(&stats, sizeof(struct sembuf));
     errno = 0;
 
-    fprintf(ERR_FILE, "[%ld] master: ricevuto SIGUSR1\n", clock() / CLOCKS_PER_SEC);
     msgctl(queue_id, IPC_STAT, &stats);
     TEST_ERROR_AND_FAIL;
 
@@ -345,10 +350,8 @@ void handler(int signal) {
     while (msg_num-- > 0) {
       int file_descriptors[2];
       int new_node_msg_id;
-      int i = 0;
 
       if (pipe(file_descriptors) == -1) {
-        fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
         master_cleanup();
       }
       TEST_ERROR_AND_FAIL;
@@ -359,14 +362,13 @@ void handler(int signal) {
           master_cleanup();
         }
         else {
-          fprintf(ERR_FILE, "master: no msg in queue\n");
           errno = 0;
           break;
         }
       }
       incoming_t = message.mtext;
 
-      if (*(nodes.size) < SO_NODES_NUM * 2) {
+      if (*(nodes.size) < MAX_NODES) {
         switch ((child = fork())) {
         case -1:
           fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
@@ -384,7 +386,7 @@ void handler(int signal) {
           TEST_ERROR_AND_FAIL;
 
           if (close(file_descriptors[1]) == -1) {
-            fprintf(ERR_FILE, "n%d: cannot close fd write end", getpid());
+            fprintf(ERR_FILE, "n%d: cannot close fd write end\n<", getpid());
             exit(EXIT_FAILURE);
           }
           friends = assign_friends(nodes.array, *(nodes.size));
@@ -396,20 +398,23 @@ void handler(int signal) {
           shmdt(nodes.array);
           shmdt(nodes.size);
 
+          sigfillset(&mask);
+          sigprocmask(SIG_UNBLOCK, &mask, NULL);
+
           init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
           break;
         }
         default:
+          break;
+        }
+
         {
-          int* lista_nodi = init_list(SO_NUM_FRIENDS);
+          int lista_nodi[SO_NUM_FRIENDS];
+          int i = 0;
           if (close(file_descriptors[0]) == -1) {
-            fprintf(ERR_FILE, "master: cannot close fd read end");
+            fprintf(ERR_FILE, "master: cannot close fd read end\n");
             master_cleanup();
           }
-          if (lista_nodi == NULL) {
-            TEST_ERROR_AND_FAIL;
-          }
-          i = 0;
           while (i < SO_NUM_FRIENDS) {
             int node_random = random_element(nodes.array, *(nodes.size));
             if (node_random == -1) {
@@ -417,42 +422,47 @@ void handler(int signal) {
               master_cleanup();
             }
             if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
-              lista_nodi[i++] = node_random;
+              lista_nodi[i] = node_random;
               if (write(file_descriptors[1], &child, sizeof(int)) == -1) {
                 TEST_ERROR_AND_FAIL;
               }
               kill(node_random, SIGUSR2);
+              i++;
             }
           }
-          nodes_write_fd[*(nodes.size)] = file_descriptors[1];
-          free(lista_nodi);
         }
-        break;
-        }
+        nodes_write_fd[*(nodes.size)] = file_descriptors[1];
 
         sops.sem_num = ID_READY_ALL;
         sops.sem_op = 1;
-        if (semop(sem_id, &sops, 1) == -1) {
+        while (semop(sem_id, &sops, 1) == -1 && errno == EINTR);
+        if (errno != EINTR) {
           TEST_ERROR_AND_FAIL;
         }
+        errno = 0;
 
         sops.sem_op = 0;
-        if (semop(sem_id, &sops, 1) == -1) {
+        while (semop(sem_id, &sops, 1) == -1 && errno == EINTR);
+        if (errno != EINTR) {
           TEST_ERROR_AND_FAIL;
         }
+        errno = 0;
 
         /*msgget del nodo */
-        if ((new_node_msg_id = msgget(child, 0)) == -1) {
-          fprintf(ERR_FILE, "master: cannot retrieve the node queue, node=%d, error %s\n", child, strerror(errno));
-          master_cleanup();
-        }
+        new_node_msg_id = msgget(child, 0);
+        TEST_ERROR_AND_FAIL;
         /*msgsnd della transaction al nodo */
         msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
         TEST_ERROR_AND_FAIL;
+        struct msqid_ds new_node_stats;
+        msgctl(new_node_msg_id, IPC_STAT, &new_node_stats);
+        TEST_ERROR_AND_FAIL;
 
         kill(child, SIGUSR1);
-        nodes.array[(*(nodes.size))] = child;
-        (*(nodes.size))++;
+        TEST_ERROR;
+
+        nodes.array[*(nodes.size)] = child;
+        (*nodes.size)++;
       }
       else {
         int sender = incoming_t.sender;
@@ -464,6 +474,7 @@ void handler(int signal) {
         }
       }
     }
+    sigprocmask(SIG_UNBLOCK, &mask, NULL);
   }
   break;
   default:
@@ -488,11 +499,11 @@ int main() {
   /*bzero(&semval, sizeof(union semun));*/
   load_constants();
 
-  if ((nodes_write_fd = init_list(SO_NODES_NUM * 2)) == NULL) {
+  if ((nodes_write_fd = init_list(MAX_NODES)) == NULL) {
     fprintf(ERR_FILE, "master: cannot allocate memory for nodes_write_fd.\n");
     exit(EXIT_FAILURE);
   }
-  if ((node_budget = init_list(SO_NODES_NUM * 2)) == NULL) {
+  if ((node_budget = init_list(MAX_NODES)) == NULL) {
     fprintf(ERR_FILE, "master: cannot allocate memory for node_budget.\n");
     exit(EXIT_FAILURE);
 
@@ -555,15 +566,11 @@ int main() {
   *(nodes.size) = SO_NODES_NUM;
 
   /* Inizializzazione shm nodi array */
-  shm_nodes_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_NODES_NUM * 2);
+  shm_nodes_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * MAX_NODES);
   TEST_ERROR_AND_FAIL;
   nodes.array = attach_shm_memory(shm_nodes_array_id, 0);
   TEST_ERROR_AND_FAIL;
   i = 0;
-  while (i < SO_NODES_NUM * 2) {
-    nodes.array[i] = 0;
-    i++;
-  }
 
   /* Inizializzazione coda di mes saggi master-nodi */
   if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
@@ -583,16 +590,17 @@ int main() {
     fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
     master_cleanup();
   }
+  if (sigaction(SIGUSR2, &act, NULL) < 0) {
+    fprintf(ERR_FILE, "master: could not associate handler to SIGUSR2.\n");
+    master_cleanup();
+  }
   if (sigaction(SIGINT, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGINT.\n");
     master_cleanup();
   }
+  act.sa_flags = SA_NODEFER;
   if (sigaction(SIGUSR1, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
-    master_cleanup();
-  }
-  if (sigaction(SIGUSR2, &act, NULL) < 0) {
-    fprintf(ERR_FILE, "master: could not associate handler to SIGUSR2.\n");
     master_cleanup();
   }
   /* Fine handling segnali */
@@ -688,18 +696,17 @@ int main() {
 
   {
     int i = 0;
-    int* nof_transactions = malloc(sizeof(int) * SO_NODES_NUM * 2);
+    int* nof_transactions = malloc(sizeof(int) * MAX_NODES);
     int ending_reason;
     if (nof_transactions == NULL) {
       TEST_ERROR_AND_FAIL;
     }
-    while (i < SO_NODES_NUM * 2) {
+    while (i < MAX_NODES) {
       nof_transactions[i++] = 0;
     }
 
     alarm(1);
     i = 0;
-    fprintf(LOG_FILE, "master: inizio il ciclo principale\n");
     while (simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
@@ -709,8 +716,7 @@ int main() {
         if (errno == EINTR) {
           continue;
         }
-        fprintf(ERR_FILE, "master: wait failed for an unexpected error: %s\n", strerror(errno));
-        master_cleanup();
+        TEST_ERROR_AND_FAIL;
       }
       if (WIFEXITED(status)) {
         if (WEXITSTATUS(status) == EXIT_FAILURE) {
@@ -751,18 +757,7 @@ int main() {
         int index;
         if ((index = find_element(nodes.array, size, terminated_p)) != -1) {
           if (WIFEXITED(status)) {
-            int exit_status = 0;
-            switch ((exit_status = WEXITSTATUS(status))) {
-            case EXIT_FAILURE:
-              nof_transactions[index] = -1;
-              break;
-            default:
-              if (index == 0) {
-                fprintf(ERR_FILE, "master: exit status for node at index 0 = %d\n", exit_status);
-              }
-              nof_transactions[index] = exit_status;
-              break;
-            }
+            nof_transactions[index] = WEXITSTATUS(status);
           }
         }
       }

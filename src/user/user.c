@@ -71,7 +71,7 @@ void init_user(int* users, int shm_nodes_array, int shm_nodes_size, int shm_book
   }
 
   if ((sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR)) == -1) {
-    fprintf(ERR_FILE, "user u%d: err\n", getpid());
+    TEST_ERROR;
     exit(EXIT_FAILURE);
   }
 

@@ -51,7 +51,7 @@ static void sig_handler(int sig) {
   case SIGTERM:
     node_cleanup();
     exit(nof_transaction);
-  case SIGUSR1:/* massage in queue */
+  case SIGUSR1:/* message in queue */
   {
     msgqnum_t msg_num;
     if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
@@ -62,7 +62,6 @@ static void sig_handler(int sig) {
     msg_num = stats.msg_qnum;
     /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
-      int chosen_friend;
       transaction t;
       struct msg* incoming = malloc(sizeof(struct msg));
       if (incoming == NULL) {
@@ -108,6 +107,7 @@ static void sig_handler(int sig) {
       }
       /*gestione transaction_pool piena */
       else if (nof_transaction == SO_TP_SIZE) {
+        int chosen_friend;
         int friend_queue = 0;
         chosen_friend = random_element(friends, nof_friends);
         if (chosen_friend == -1) {
@@ -132,19 +132,7 @@ static void sig_handler(int sig) {
       }
       /* accetta la transazione nella sua transaction pool*/
       else {
-        if (t.sender <= 0) {
-          fprintf(ERR_FILE, "n%d: wtf\n", getpid());
-          print_transaction(t);
-          node_cleanup();
-          exit(EXIT_FAILURE);
-        }
-        else {
-          transaction_pool[nof_transaction++] = t;
-        }
-        /*
-        fprintf(LOG_FILE, "[%ld] n%d: mtype: %ld/%d ", clock() / CLOCKS_PER_SEC, getpid(), incoming.mtype - 1, SO_HOPS);
-        print_transaction(t);
-        */
+        transaction_pool[nof_transaction++] = t;
       }
     }
     break;
@@ -242,7 +230,7 @@ static void generate() {
   }
   if (SO_BLOCK_SIZE >= SO_TP_SIZE) {
     fprintf(LOG_FILE, "init_node: SO_BLOCK_SIZE >= SO_TP_SIZE. Check environmental config.\n");
-    free(transaction_pool);
+    node_cleanup();
     CHILD_STOP_SIMULATION;
     exit(EXIT_FAILURE);
   }
@@ -316,8 +304,6 @@ void simulate_processing(struct master_book book, int sem_id) {
 
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
 
-
-
   sigemptyset(&mask);
   sigaddset(&mask, SIGUSR1);
   sigprocmask(SIG_BLOCK, &mask, NULL);
@@ -365,11 +351,13 @@ void simulate_processing(struct master_book book, int sem_id) {
     errno = 0;
   }
   get_out_of_the_pool();
+
   sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
 
 void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_size_id)
 {
+  int ppid = getppid();
   struct sembuf sops;
   int sem_id;
   struct master_book book;
@@ -402,23 +390,37 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   /* ID_READY_ALL ottenuto da master.h */
   sops.sem_num = ID_READY_ALL;
   sops.sem_op = -1;
-  semop(sem_id, &sops, 1);
-
-  fprintf(LOG_FILE, "Node %d: completed setup. Queue id %d \n", getpid(), queue_id);
+  while (semop(sem_id, &sops, 1) == -1) {
+    if (errno != EINTR) {
+      TEST_ERROR;
+      node_cleanup();
+      exit(EXIT_FAILURE);
+    }
+    errno = 0;
+  }
 
   sops.sem_op = 0;
-  semop(sem_id, &sops, 1);
+  while (semop(sem_id, &sops, 1) == -1) {
+    if (errno != EINTR) {
+      TEST_ERROR;
+      node_cleanup();
+      exit(EXIT_FAILURE);
+    }
+    errno = 0;
+  }
 
-  while (1)
+  /* fprintf(ERR_FILE, "Node %d: completed setup. Queue id %d \n", getpid(), queue_id); */
+
+  while (kill(ppid, 0) != -1 && errno != ESRCH)
   {
-    transaction* block = NULL;
+    alarm(1);
     if (nof_transaction < SO_BLOCK_SIZE - 1) {
       pause();
       continue;
     }
-    alarm(1);
     simulate_processing(book, sem_id);
-
-    free(block);
   }
+
+  fprintf(ERR_FILE, "n%d: master (%d) terminated. Ending...\n", getpid(), ppid);
+  exit(EXIT_FAILURE);
 }
