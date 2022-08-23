@@ -52,8 +52,13 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
 
 void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
 {
+  struct sigaction sa;
+  sigset_t mask;
+
   users = users_a;
   bilancio_corrente = SO_BUDGET_INIT;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGINT);
 
   nodes.array = shmat(shm_nodes_array, NULL, SHM_RDONLY);
   TEST_ERROR_AND_FAIL;
@@ -64,6 +69,18 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
   book.blocks = shmat(shm_book_id, NULL, SHM_RDONLY);
   TEST_ERROR_AND_FAIL;
   book.size = shmat(shm_book_size_id, NULL, SHM_RDONLY);
+  TEST_ERROR_AND_FAIL;
+
+  sa.sa_flags = 0;
+  sa.sa_mask = mask;
+  sa.sa_handler = usr_handler;
+  sigaction(SIGUSR1, &sa, NULL);
+  TEST_ERROR_AND_FAIL;
+  sigaction(SIGUSR2, &sa, NULL);
+  TEST_ERROR_AND_FAIL;
+  sigaction(SIGTERM, &sa, NULL);
+  TEST_ERROR_AND_FAIL;
+  sigaction(SIGSEGV, &sa, NULL);
   TEST_ERROR_AND_FAIL;
 
   while (cont_try < SO_RETRY)
