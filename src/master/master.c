@@ -105,7 +105,6 @@ void stop_simulation() {
   int i = 0;
   int child = 0;
 
-
   bzero(&mask, sizeof(sigset_t));
   sigemptyset(&mask);
   sigaddset(&mask, SIGINT);
@@ -175,7 +174,6 @@ void master_cleanup() {
     msgctl(queue_id, IPC_RMID, 0);
     TEST_ERROR;
   }
-
 
   while (nodes_write_fd[i] != 0) {
     close(nodes_write_fd[i]);
@@ -307,13 +305,13 @@ int* assign_friends(int* array, int size) {
     friends[i] = random_el;
     i++;
   }
-
   return friends;
 }
 
 void handler(int signal) {
   switch (signal) {
   case SIGALRM:
+    /*alarm per la stampa periodica*/
     simulation_seconds++;
     periodical_update();
     periodical_print();
@@ -322,13 +320,13 @@ void handler(int signal) {
   case SIGINT:
     fprintf(LOG_FILE, "master: recieved a SIGINT at %ds from simulation start\n", simulation_seconds);
     master_cleanup();
-
     break;
   case SIGUSR2:
     fprintf(ERR_FILE, "[%ld] master: sono stato notificato da un nodo che la size è stata superata\n", clock() / CLOCKS_PER_SEC);
     break;
   case SIGUSR1:
   {
+    /*notifica per la creazione di un nuovo nodo amico*/
     int child;
     struct msg message;
     struct msqid_ds stats;
@@ -384,9 +382,9 @@ void handler(int signal) {
           int* friends;
           struct nodes nodes;
           /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
-          nodes.array = attach_shm_memory(shm_nodes_array_id, SHM_RDONLY);
+          nodes.array = shmat(shm_nodes_array_id, NULL, SHM_RDONLY);
           TEST_ERROR_AND_FAIL;
-          nodes.size = attach_shm_memory(shm_nodes_size_id, SHM_RDONLY);
+          nodes.size = shmat(shm_nodes_size_id, NULL, SHM_RDONLY);
           TEST_ERROR_AND_FAIL;
 
           if (close(file_descriptors[1]) == -1) {
@@ -546,24 +544,24 @@ int main() {
   /* Inizializzazione libro mastro */
   shm_book_id = start_shared_memory(IPC_PRIVATE, REGISTRY_SIZE);
   TEST_ERROR_AND_FAIL;
-  book.blocks = attach_shm_memory(shm_book_id, 0);
+  book.blocks = shmat(shm_book_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
   shm_book_size_id = start_shared_memory(IPC_PRIVATE, sizeof(int));
   TEST_ERROR_AND_FAIL;
-  book.size = attach_shm_memory(shm_book_size_id, 0);
+  book.size = shmat(shm_book_size_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
   *book.size = 0;
 
   /* Inizializzazione shm users array */
   shm_users_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_USERS_NUM);
   TEST_ERROR_AND_FAIL;
-  users = attach_shm_memory(shm_users_array_id, 0);
+  users = shmat(shm_users_array_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
 
   /* Inizializzazione shm per size dei nodi */
   shm_nodes_size_id = start_shared_memory(IPC_PRIVATE, sizeof(int));
   TEST_ERROR_AND_FAIL;
-  nodes.size = attach_shm_memory(shm_nodes_size_id, 0);
+  nodes.size = shmat(shm_nodes_size_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
 
   *(nodes.size) = SO_NODES_NUM;
@@ -571,7 +569,7 @@ int main() {
   /* Inizializzazione shm nodi array */
   shm_nodes_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * MAX_NODES);
   TEST_ERROR_AND_FAIL;
-  nodes.array = attach_shm_memory(shm_nodes_array_id, 0);
+  nodes.array = shmat(shm_nodes_array_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
   i = 0;
 
@@ -625,7 +623,7 @@ int main() {
     {
       int* friends;
       int* nodes_arr;
-      if ((nodes_arr = attach_shm_memory(shm_nodes_array_id, SHM_RDONLY)) == NULL) {
+      if ((nodes_arr = shmat(shm_nodes_array_id, NULL, SHM_RDONLY)) == NULL) {
         fprintf(ERR_FILE, "u%d: cannot attach nodes shared memory\n", getpid());
         exit(EXIT_FAILURE);
       }
@@ -676,7 +674,7 @@ int main() {
     case 0:
     {
       int* users;
-      if ((users = attach_shm_memory(shm_users_array_id, SHM_RDONLY)) == NULL) {
+      if ((users = shmat(shm_users_array_id, NULL, SHM_RDONLY)) == NULL) {
         fprintf(ERR_FILE, "u%d: cannot attach users shared memory\n", getpid());
         exit(EXIT_FAILURE);
       }

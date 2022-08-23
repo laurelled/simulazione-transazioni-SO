@@ -48,10 +48,13 @@ static void sig_handler(int sig) {
   struct msqid_ds stats;
   bzero(&stats, sizeof(struct msqid_ds));
   switch (sig) {
+
   case SIGTERM:
+    /*segnale per la terminazione dell'esecuzione*/
     node_cleanup();
     exit(nof_transaction);
-  case SIGUSR1:/* message in queue */
+  case SIGUSR1:
+    /* message in queue */
   {
     msgqnum_t msg_num;
     if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
@@ -63,14 +66,9 @@ static void sig_handler(int sig) {
     /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
       transaction t;
-      struct msg* incoming = malloc(sizeof(struct msg));
-      if (incoming == NULL) {
-        TEST_ERROR;
-        node_cleanup();
-        exit(EXIT_FAILURE);
-      }
+      struct msg incoming;
 
-      if (msgrcv(queue_id, incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+      if (msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
         if (errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
           node_cleanup();
@@ -79,17 +77,17 @@ static void sig_handler(int sig) {
         }
         break;
       }
-      t = incoming->mtext;
+      t = incoming.mtext;
       /*gestione invio transazione al master se SO_HOPS raggiunti */
-      if (incoming->mtype == SO_HOPS + 1) {
+      if (incoming.mtype == SO_HOPS + 1) {
         int master_q = 0;
         if ((master_q = msgget(getppid(), 0)) == -1) {
           fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
           node_cleanup();
           exit(EXIT_FAILURE);
         }
-        incoming->mtype = getppid();
-        if (msgsnd(master_q, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+        incoming.mtype = getppid();
+        if (msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
             node_cleanup();
@@ -119,8 +117,8 @@ static void sig_handler(int sig) {
           node_cleanup();
           exit(EXIT_FAILURE);
         }
-        incoming->mtype += 1;
-        if (msgsnd(friend_queue, incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+        incoming.mtype += 1;
+        if (msgsnd(friend_queue, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
             fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
             node_cleanup();
@@ -138,6 +136,7 @@ static void sig_handler(int sig) {
   }
   case SIGUSR2:
   {
+    /*segnale utilizzato per l'aggiunta di un nuovo nodo amico*/
     int nodo_ricevuto = 0;
     if (read(pipe_fd, &nodo_ricevuto, sizeof(int)) == -1) {
       if (errno != EINTR) {
@@ -151,9 +150,9 @@ static void sig_handler(int sig) {
     /* fprintf(ERR_FILE, "n%d: recieved SIGUSR2 from master. Added friend %d\n", getpid(), nodo_ricevuto);*/
     break;
   }
-  /*gestione invio transazione periodico*/
   case SIGALRM:
   {
+    /*gestione invio transazione periodico*/
     if (nof_transaction > 0) {
       sigset_t mask;
       int chosen_friend;
@@ -284,6 +283,7 @@ static void generate() {
   */
 }
 
+/*eliminazione delle prime SO_BLOCK_SIZE-1 transazioni dalla pool*/
 static void get_out_of_the_pool() {
   register int i = 0;
   while (i < SO_BLOCK_SIZE - 1)
@@ -374,13 +374,14 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   }
 
   generate();
-  if ((book.blocks = attach_shm_memory(shm_book_id, 0)) == NULL) {
+
+  if ((book.blocks = shmat(shm_book_id, NULL, 0)) == NULL) {
     fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
     node_cleanup();
     exit(EXIT_FAILURE);
   }
 
-  if ((book.size = attach_shm_memory(shm_book_size_id, 0)) == NULL) {
+  if ((book.size = shmat(shm_book_size_id, NULL, 0)) == NULL) {
     fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
     node_cleanup();
     exit(EXIT_FAILURE);

@@ -41,11 +41,3 @@ void print_transaction(transaction t) {
     fprintf(LOG_FILE, "TS %ld, n%d, %d$\n", t.timestamp, t.receiver, t.quantita);
 
 }
-
-void* attach_shm_memory(int shm_id, int flags) {
-  void* new = NULL;
-  if ((new = shmat(shm_id, NULL, flags)) == (void*)-1) {
-    return NULL;
-  }
-  return new;
-}
