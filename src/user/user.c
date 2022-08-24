@@ -120,14 +120,15 @@ void usr_handler(int signal) {
     int transaction_q = 0;
     struct msg incoming;
     transaction refused_t;
-    transaction_q = msgget(getppid(), 0);
+    transaction_q = msgget(MSG_Q, 0);
     TEST_ERROR_AND_FAIL;
 
     msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT);
     if (errno != ENOMSG) {
       TEST_ERROR_AND_FAIL;
     }
-    fprintf(ERR_FILE, "u%d: no msg was found with my pid type\n", getpid());
+    else
+      fprintf(ERR_FILE, "u%d: no msg was found with my pid type\n", getpid());
     refused_t = incoming.mtext;
     bilancio_corrente += (refused_t.quantita + refused_t.reward);
     /* fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try)); */
@@ -137,7 +138,7 @@ void usr_handler(int signal) {
   break;
   case SIGUSR2:
     /*generazione di una transazione da un segnale*/
-    fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...");
+    fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...\n");
     generate_and_send_transaction(nodes, users, book, &block_reached);
     break;
   case SIGTERM:

@@ -124,6 +124,28 @@ static void sig_handler(int sig) {
             node_cleanup();
             exit(EXIT_FAILURE);
           }
+          else {
+            int user_q = 0;
+            if ((user_q = msgget(MSG_Q, 0)) == -1) {
+              fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
+              node_cleanup();
+              exit(EXIT_FAILURE);
+            }
+            if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+              if (errno != EAGAIN) {
+                fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
+                node_cleanup();
+                exit(EXIT_FAILURE);
+              }
+              else {
+                fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid()); 
+              }
+            }
+            else {
+              kill(t.sender, SIGUSR1);
+            }
+
+          }
         }
         kill(chosen_friend, SIGUSR1);
       }
