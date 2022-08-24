@@ -72,7 +72,6 @@ static void sig_handler(int sig) {
         if (errno != ENOMSG) {
           fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
           node_cleanup();
-
           exit(EXIT_FAILURE);
         }
         break;
@@ -94,8 +93,15 @@ static void sig_handler(int sig) {
             exit(EXIT_FAILURE);
           }
           else {
+            int user_q;
             int check;
-            if ((check = refuse_transaction(t)) == -1) {
+            if ((user_q = msgget(MSG_Q, 0)) == -1) {
+              TEST_ERROR;
+              node_cleanup();
+              exit(EXIT_FAILURE);
+            }
+            if ((check = refuse_transaction(t, user_q)) == -1) {
+              TEST_ERROR;
               node_cleanup();
               exit(EXIT_FAILURE);
             }
@@ -131,8 +137,15 @@ static void sig_handler(int sig) {
             exit(EXIT_FAILURE);
           }
           else {
+            int user_q;
             int check;
-            if ((check = refuse_transaction(t)) == -1) {
+            if ((user_q = msgget(MSG_Q, 0)) == -1) {
+              TEST_ERROR;
+              node_cleanup();
+              exit(EXIT_FAILURE);
+            }
+            if ((check = refuse_transaction(t, user_q)) == -1) {
+              TEST_ERROR;
               node_cleanup();
               exit(EXIT_FAILURE);
             }

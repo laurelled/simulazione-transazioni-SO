@@ -9,6 +9,6 @@ void free_list(int* l);
 int random_element(int* l, int size);
 int* expand_list(int* l, int old_size, int new_size);
 int find_element(int* l, int size, int pid);
-int refuse_transaction(transaction transaction);
+int refuse_transaction(transaction transaction, int user_q);
 
 #endif

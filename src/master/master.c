@@ -71,7 +71,7 @@ static int shm_users_array_id = -1;
 
 static int* user_budget;
 static int* node_budget;
-static int block_reached;
+static int point_reached;
 
 static int inactive_users;
 static int simulation_seconds = 0;
@@ -80,10 +80,14 @@ static int simulation_seconds = 0;
 void periodical_update() {
   int index;
   transaction t;
-  int size = *book.size * SO_BLOCK_SIZE;
+  int size = *(book.size) * SO_BLOCK_SIZE;
 
-  while (block_reached < size) {
-    t = book.blocks[block_reached];
+  while (point_reached < size) {
+    t = book.blocks[point_reached];
+    if (t.sender != -1)
+      fprintf(LOG_FILE, "point_reached=%d, TS %ld, u%d -> u%d, %d$, taxes: %d$\n", point_reached, t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
+    else
+      fprintf(LOG_FILE, "point_reached=%d, TS %ld, n%d, %d$\n", point_reached, t.timestamp, t.receiver, t.quantita);
     if (t.sender == -1) {
       int nodes_size = *(nodes.size);
       int index = find_element(nodes.array, nodes_size, t.receiver);
@@ -91,12 +95,15 @@ void periodical_update() {
     }
     else {
       int total_quantity = t.quantita + t.reward;
-      index = find_element(users, SO_USERS_NUM, t.sender);
-      user_budget[index] = user_budget[index] - total_quantity;
-      index = find_element(users, SO_USERS_NUM, t.receiver);
-      user_budget[index] = user_budget[index] + t.quantita;
+      int sender_index, reciever_index;
+      sender_index = find_element(users, SO_USERS_NUM, t.sender);
+      reciever_index = find_element(users, SO_USERS_NUM, t.receiver);
+      user_budget[sender_index] -= total_quantity;
+      user_budget[reciever_index] += t.quantita;
+      /*fprintf(ERR_FILE, "r%d (%d$), s%d (%d$), quant %d rew%d (%d) -> r %d (%d$), s %d (%d$)\n", users[reciever_index], user_budget[reciever_index], users[sender_index], user_budget[sender_index], t.quantita, t.reward, total_quantity, users[reciever_index], user_budget[reciever_index] - t.quantita, users[sender_index], user_budget[sender_index] + total_quantity);
+    */
     }
-    block_reached++;
+    point_reached++;
   }
 
 }
@@ -255,11 +262,11 @@ void summary_print(int ending_reason, int* users, int* user_budget, struct nodes
     break;
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
-  fprintf(LOG_FILE, "USERS BUDGETS\n");
+  /*fprintf(LOG_FILE, "USERS BUDGETS\n");
   while (i < SO_USERS_NUM) {
     fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
     i++;
-  }
+  }*/
 
   /* bilancio di ogni processo nodo */
   i = 0;
@@ -321,11 +328,11 @@ void handler(int signal) {
     /*alarm per la stampa periodica*/
     simulation_seconds++;
     periodical_update();
-    periodical_print();
+    /* periodical_print(); */
+    fprintf(ERR_FILE, "sim_sec=%d\n", simulation_seconds);
     alarm(1);
     break;
   case SIGINT:
-    fprintf(LOG_FILE, "master: recieved a SIGINT at %ds from simulation start\n", simulation_seconds);
     master_cleanup();
     break;
   case SIGUSR2:
@@ -355,7 +362,7 @@ void handler(int signal) {
     TEST_ERROR_AND_FAIL;
 
     msg_num = stats.msg_qnum;
-    /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
+    /* per risolvere il merge dei segnali, il master legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
       int file_descriptors[2];
       int new_node_msg_id;
@@ -371,6 +378,7 @@ void handler(int signal) {
         }
         else {
           errno = 0;
+          fprintf(ERR_FILE, "did not found anything\n");
           break;
         }
       }
@@ -417,6 +425,7 @@ void handler(int signal) {
         }
         sops.sem_num = ID_READY_ALL;
         sops.sem_op = 1;
+        errno = 0;
         while (semop(sem_id, &sops, 1) == -1 && errno == EINTR);
         if (errno != EINTR) {
           TEST_ERROR_AND_FAIL;
@@ -433,10 +442,9 @@ void handler(int signal) {
         {
           int* lista_nodi = init_list(SO_NUM_FRIENDS);
           int i = 0;
-          while (close(file_descriptors[1]) == -1) {
+          while (close(file_descriptors[0]) == -1) {
             if (errno != EINTR) {
-              TEST_ERROR;
-              exit(EXIT_FAILURE);
+              TEST_ERROR_AND_FAIL;
             }
           }
           errno = 0;
@@ -448,18 +456,18 @@ void handler(int signal) {
               master_cleanup();
             }
             if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
-              int index = find_element(nodes.array, (*nodes.size), node_random);
+              int index = find_element(nodes.array, *(nodes.size), node_random);
               lista_nodi[i] = node_random;
               while (write(nodes_write_fd[index], &child, sizeof(int)) == -1) {
                 if (errno != EINTR) {
                   TEST_ERROR_AND_FAIL;
                 }
-                kill(node_random, SIGUSR2);
-                i++;
               }
+              kill(node_random, SIGUSR2);
+              i++;
             }
-            free_list(lista_nodi);
           }
+          free_list(lista_nodi);
           nodes_write_fd[*(nodes.size)] = file_descriptors[1];
 
 
@@ -478,14 +486,18 @@ void handler(int signal) {
         }
       }
       else {
+        int check;
         int sender = incoming_t.sender;
         if (kill(sender, 0) != -1) {
-          int check;
-          if ((check = refuse_transaction(incoming_t)) == -1) {
+          int user_q;
+          if ((user_q = msgget(getpid() - 1, 0)) == -1) {
+            TEST_ERROR_AND_FAIL;
+          }
+          if ((check = refuse_transaction(incoming_t, user_q)) == -1) {
             master_cleanup();
-            exit(EXIT_FAILURE);
-          }else if(check == 1){
-            fprintf(ERR_FILE, "master%d: cannot refuse transaction\n", getpid());
+          }
+          else if (check == 1) {
+            fprintf(ERR_FILE, "master : cannot refuse transaction\n");
           }
         }
       }
@@ -580,13 +592,18 @@ int main() {
   i = 0;
 
   /* Inizializzazione coda di messaggi master-nodi */
-  queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
-  TEST_ERROR_AND_FAIL;
-  fprintf(LOG_FILE, "master: inizializzata la coda con key %d e id %d\n", getpid(), queue_id);
+  if ((queue_id = msgget(getpid(), IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
+    TEST_ERROR_AND_FAIL;
+  }
+  else
+    fprintf(LOG_FILE, "master: inizializzata la coda con key %d e id %d\n", getpid(), queue_id);
 
-  /* Inizializzazione coda di messaggi di trasazioni rifiutate per gli user */
-  refused_queue_id = msgget(getpid() - 1, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
-  TEST_ERROR_AND_FAIL;
+  /* Inizializzazione coda di messaggi di trasazioni rifiutate master-nodi-user */
+  if ((refused_queue_id = msgget(getpid() - 1, IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
+    TEST_ERROR_AND_FAIL;
+  }
+  else
+    fprintf(LOG_FILE, "master: inizializzata la coda con key %d e id %d\n", getpid() - 1, refused_queue_id);
 
   /* Handling segnali SIGALRM, SIGINT, SIGUSR1 */
   bzero(&mask, sizeof(sigset_t));
@@ -661,6 +678,7 @@ int main() {
       break;
     }
   }
+  fprintf(ERR_FILE, "me sto addormentà pe i nodi\n");
 
   /* Do la possibilità ai nodi di completare il setup */
   sops.sem_num = ID_READY_NODE;
@@ -698,17 +716,21 @@ int main() {
 
   }
 
+  fprintf(ERR_FILE, "me sto addormentà pe gli utenti\n");
   sops.sem_num = ID_READY_ALL;
   sops.sem_op = -1;
   semop(sem_id, &sops, 1);
 
+
   sops.sem_op = 0;
   semop(sem_id, &sops, 1);
 
+  fprintf(ERR_FILE, "me sto a sveglià pe gli utenti\n");
+
   {
     int i = 0;
-    int* nof_transactions = malloc(sizeof(int) * MAX_NODES);
     int ending_reason;
+    int* nof_transactions = malloc(sizeof(int) * MAX_NODES);
     if (nof_transactions == NULL) {
       TEST_ERROR_AND_FAIL;
     }
@@ -719,6 +741,8 @@ int main() {
 
     alarm(1);
     i = 0;
+
+    fprintf(ERR_FILE, "master: ciclo principale (SO_SIM_SEC=%d)\n", SO_SIM_SEC);
     while (simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
       int status = 0;
       int node_index = 0;
@@ -808,10 +832,9 @@ int main() {
   msgctl(queue_id, IPC_RMID, NULL);
   TEST_ERROR;
 
-  if (semctl(sem_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
-    master_cleanup();
-  }
+  semctl(sem_id, 0, IPC_RMID);
+  TEST_ERROR_AND_FAIL;
+
   fprintf(LOG_FILE, "Completed simulation. Exiting...\n");
   exit(EXIT_SUCCESS);
 }
