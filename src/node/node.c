@@ -1,7 +1,7 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
 #include "../master/master.h"
-#include "../pid_list/pid_list.h"
+#include "../ipc_functions/ipc_functions.h"
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -27,7 +27,7 @@ extern int SO_MAX_TRANS_PROC_NSEC;
 extern int SO_MIN_TRANS_PROC_NSEC;
 extern int SO_HOPS;
 
-/* IPC memories */
+/* IPC */
 static int queue_id;
 static int pipe_fd;
 
@@ -89,13 +89,19 @@ static void sig_handler(int sig) {
         incoming.mtype = getppid();
         if (msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
           if (errno != EAGAIN) {
-            fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
+            fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
             node_cleanup();
-
             exit(EXIT_FAILURE);
           }
           else {
-            /* fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid()); */
+            int check;
+            if ((check = refuse_transaction(t)) == -1) {
+              node_cleanup();
+              exit(EXIT_FAILURE);
+            }
+            else if (check == 1) {
+              fprintf(ERR_FILE, "n%d: cannot refuse transaction\n", getpid());
+            }
           }
         }
         else {
@@ -125,29 +131,19 @@ static void sig_handler(int sig) {
             exit(EXIT_FAILURE);
           }
           else {
-            int user_q = 0;
-            if ((user_q = msgget(MSG_Q, 0)) == -1) {
-              fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
+            int check;
+            if ((check = refuse_transaction(t)) == -1) {
               node_cleanup();
               exit(EXIT_FAILURE);
             }
-            if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-              if (errno != EAGAIN) {
-                fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
-                node_cleanup();
-                exit(EXIT_FAILURE);
-              }
-              else {
-                fprintf(LOG_FILE, "node n%d: recieved EGAIN while trying to send transaction to master\n", getpid()); 
-              }
+            else if (check == 1) {
+              fprintf(ERR_FILE, "n%d: cannot refuse transaction\n", getpid());
             }
-            else {
-              kill(t.sender, SIGUSR1);
-            }
-
           }
         }
-        kill(chosen_friend, SIGUSR1);
+        else {
+          kill(chosen_friend, SIGUSR1);
+        }
       }
       /* accetta la transazione nella sua transaction pool*/
       else {
@@ -203,8 +199,7 @@ static void sig_handler(int sig) {
 
       if (msgsnd(friend_queue, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
         if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "node n%d: SIGALRM, recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
-
+          fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
           node_cleanup();
           exit(EXIT_FAILURE);
         }

@@ -1,7 +1,7 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
 #include "user.h"
-#include "../pid_list/pid_list.h"
+#include "../ipc_functions/ipc_functions.h"
 #include "../master/master.h"
 
 #include <signal.h>
