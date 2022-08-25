@@ -34,6 +34,20 @@ void new_transaction(transaction* new, int sender, int reciever, int quantita, i
   new->reward = reward;
 }
 
+int find_element_in_book(struct master_book book, int limit, transaction x) {
+  int found = 0;
+  while (limit >= 0 && !found) {
+    transaction t = book.blocks[limit];
+    if (t.timestamp == x.timestamp && t.sender == x.sender && t.receiver == x.receiver) {
+      found = 1;
+    }
+    else
+      limit--;
+  }
+
+  return found;
+}
+
 void print_transaction(transaction t) {
   if (t.sender != -1)
     fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);

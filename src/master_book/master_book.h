@@ -26,5 +26,6 @@ struct msg {
 
 void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);
 void print_transaction(transaction t);
+int find_element_in_book(struct master_book book, int limit, transaction x);
 
 #endif

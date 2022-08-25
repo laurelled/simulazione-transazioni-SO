@@ -41,6 +41,7 @@ static int block_reached;
 
 static int bilancio_corrente;
 static int cont_try;
+static int trans_send;
 
 static struct nodes nodes;
 static struct master_book book;
@@ -98,6 +99,7 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
       int transaction_q = 0, total;
       struct msg incoming;
       transaction refused_t;
+      errno = 0;
 
       refused_flag = 0;
       transaction_q = msgget(MSG_Q, 0);
@@ -112,12 +114,12 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
       refused_t = incoming.mtext;
       total = refused_t.quantita + refused_t.reward;
       bilancio_corrente += total;
-      fprintf(ERR_FILE, "u%d: aggiunto al bilancio %d\n", getpid(), total);
+      /*fprintf(ERR_FILE, "u%d: aggiunto al bilancio %d\n", getpid(), total);*/
       ++cont_try;
     }
 
     generate_and_send_transaction(nodes, users, book, &block_reached);
-
+    trans_send++;
     /*tempo di attesa dopo l'invio di una transazione*/
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
   }
@@ -138,7 +140,6 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
     }
     i++;
   }
-  /* codifico block_reached come un indice del blocco raggiunto */
   *block_reached = i;
   return bilancio;
 }
@@ -153,6 +154,7 @@ void usr_handler(int signal) {
     /*generazione di una transazione da un segnale*/
     fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...\n");
     generate_and_send_transaction(nodes, users, book, &block_reached);
+    trans_send++;
     break;
   case SIGTERM:
     /*segnale per la terminazione dell'esecuzione*/
@@ -169,7 +171,8 @@ void usr_handler(int signal) {
 }
 
 void generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book, int* block_reached) {
-  if ((bilancio_corrente = calcola_bilancio(bilancio_corrente, book, block_reached)) >= 2) {
+  bilancio_corrente = calcola_bilancio(bilancio_corrente, book, block_reached);
+  if (bilancio_corrente >= 2) {
     int size = 0, queue_id, cifra_utente, random_user, random_node, total_quantity, reward;
     transaction t;
     struct msg message;
@@ -190,7 +193,7 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
     /* generazione di un importo da inviare*/
     srand(getpid() + clock());
     total_quantity = (rand() % (bilancio_corrente - 2 + 1)) + 2;
-    reward = total_quantity / 100 * SO_REWARD;
+    reward = total_quantity * SO_REWARD / 100;
     if (reward == 0)
       reward = 1;
     cifra_utente = total_quantity - reward;
@@ -214,7 +217,7 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
         exit(EXIT_FAILURE);
       }
       else {
-        cont_try++;
+        ++cont_try;
       }
     }
     else {
@@ -224,7 +227,6 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
     }
   }
   else {
-    cont_try++;
-
+    ++cont_try;
   }
 }

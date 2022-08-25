@@ -76,6 +76,7 @@ volatile sig_atomic_t periodical_flag;
 static int inactive_users;
 static int simulation_seconds = 0;
 
+void master_cleanup();
 
 int periodical_update(int block_reached) {
   int index;
@@ -84,10 +85,6 @@ int periodical_update(int block_reached) {
 
   while (block_reached < size) {
     t = book.blocks[block_reached];
-    if (t.sender != -1)
-      fprintf(LOG_FILE, "block_reached=%d, TS %ld, u%d -> u%d, %d$, taxes: %d$\n", block_reached, t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
-    else
-      fprintf(LOG_FILE, "block_reached=%d, TS %ld, n%d, %d$\n", block_reached, t.timestamp, t.receiver, t.quantita);
     if (t.sender == -1) {
       int nodes_size = *(nodes.size);
       int index = find_element(nodes.array, nodes_size, t.receiver);
@@ -95,11 +92,13 @@ int periodical_update(int block_reached) {
     }
     else {
       int total_quantity = t.quantita + t.reward;
+      int tmp = user_budget[index];
       index = find_element(users, SO_USERS_NUM, t.sender);
       user_budget[index] -= total_quantity;
-      if (user_budget[index] < 0) {
-        fprintf(LOG_FILE, "u%d budget %d | ", users[index], user_budget[index]);
+      if (tmp > 0 && user_budget[index] < 0) {
+        fprintf(LOG_FILE, "u%d budget was %d (index %d) | ", users[index], tmp, block_reached);
         print_transaction(t);
+        master_cleanup();
       }
       index = find_element(users, SO_USERS_NUM, t.receiver);
       user_budget[index] += t.quantita;
@@ -237,7 +236,7 @@ void periodical_print() {
     int size = *(nodes.size);
     int i = 0;
     /* budget di ogni processo nodo */
-    fprintf(LOG_FILE, "NODES BUDGETS\n");
+    fprintf(LOG_FILE, "NODES (%d) BUDGETS\n", *(nodes.size));
     while (i < size) {
       fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
       i++;
@@ -264,15 +263,15 @@ void summary_print(int ending_reason, int* users, int* user_budget, struct nodes
     break;
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
-  /*fprintf(LOG_FILE, "USERS BUDGETS\n");
+  fprintf(LOG_FILE, "USERS BUDGETS\n");
   while (i < SO_USERS_NUM) {
     fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
     i++;
-  }*/
+  }
 
   /* bilancio di ogni processo nodo */
   i = 0;
-  fprintf(LOG_FILE, "NODES BUDGETS\n");
+  fprintf(LOG_FILE, "NODES (%d) BUDGETS\n", *(nodes.size));
   while (i < *nodes.size) {
     fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
     i++;
@@ -378,7 +377,7 @@ void handler(int signal) {
         }
         else {
           errno = 0;
-          fprintf(ERR_FILE, "did not found anything\n");
+          fprintf(ERR_FILE, "did not find anything\n");
           break;
         }
       }
@@ -568,7 +567,7 @@ int main() {
   TEST_ERROR_AND_FAIL;
   book.size = shmat(shm_book_size_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
-  *book.size = 0;
+  *(book.size) = 0;
 
   /* Inizializzazione shm users array */
   shm_users_array_id = start_shared_memory(IPC_PRIVATE, sizeof(int) * SO_USERS_NUM);
@@ -581,7 +580,6 @@ int main() {
   TEST_ERROR_AND_FAIL;
   nodes.size = shmat(shm_nodes_size_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
-
   *(nodes.size) = SO_NODES_NUM;
 
   /* Inizializzazione shm nodi array */
@@ -738,14 +736,13 @@ int main() {
     alarm(1);
     i = 0;
     while (simulation_seconds < SO_SIM_SEC && inactive_users < SO_USERS_NUM && *book.size < SO_REGISTRY_SIZE) {
-      int status = 0;
-      int node_index = 0;
+      int status;
       int terminated_p;
 
       if (periodical_flag) {
         periodical_flag = 0;
-        /*block_reached = periodical_update(block_reached);
-        periodical_print();*/
+        block_reached = periodical_update(block_reached);
+        /*periodical_print();*/
       }
       terminated_p = wait(&status);
       if (terminated_p == -1) {
@@ -762,6 +759,7 @@ int main() {
         }
         else {
           int size = *(nodes.size);
+          int node_index = 0;
           if ((node_index = find_element(nodes.array, size, terminated_p)) != -1) {
             fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
             master_cleanup();
@@ -830,6 +828,8 @@ int main() {
   shmctl(shm_nodes_array_id, IPC_RMID, NULL);
   TEST_ERROR;
   msgctl(queue_id, IPC_RMID, NULL);
+  TEST_ERROR;
+  msgctl(refused_queue_id, IPC_RMID, NULL);
   TEST_ERROR;
 
   semctl(sem_id, 0, IPC_RMID);
