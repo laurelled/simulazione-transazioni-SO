@@ -37,13 +37,16 @@ extern int SO_MIN_TRANS_GEN_NSEC;
 extern int SO_MAX_TRANS_GEN_NSEC;
 
 static int block_reached;
-static int cont_try;
+
 
 static int bilancio_corrente;
+static int cont_try;
 
 static struct nodes nodes;
 static struct master_book book;
 static int* users;
+
+volatile sig_atomic_t refused_flag;
 
 
 void usr_handler(int);
@@ -52,39 +55,67 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
 
 void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
 {
-  struct sigaction sa;
-  sigset_t mask;
 
   users = users_a;
   bilancio_corrente = SO_BUDGET_INIT;
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGINT);
 
   nodes.array = shmat(shm_nodes_array, NULL, SHM_RDONLY);
   TEST_ERROR_AND_FAIL;
-
   nodes.size = shmat(shm_nodes_size, NULL, SHM_RDONLY);
   TEST_ERROR_AND_FAIL;
-
   book.blocks = shmat(shm_book_id, NULL, SHM_RDONLY);
   TEST_ERROR_AND_FAIL;
   book.size = shmat(shm_book_size_id, NULL, SHM_RDONLY);
   TEST_ERROR_AND_FAIL;
 
-  sa.sa_flags = 0;
-  sa.sa_mask = mask;
-  sa.sa_handler = usr_handler;
-  sigaction(SIGUSR1, &sa, NULL);
-  TEST_ERROR_AND_FAIL;
-  sigaction(SIGUSR2, &sa, NULL);
-  TEST_ERROR_AND_FAIL;
-  sigaction(SIGTERM, &sa, NULL);
-  TEST_ERROR_AND_FAIL;
-  sigaction(SIGSEGV, &sa, NULL);
-  TEST_ERROR_AND_FAIL;
+  {
+    struct sigaction sa;
+    sigset_t mask;
+
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    sa.sa_flags = 0;
+    sa.sa_mask = mask;
+    sa.sa_handler = usr_handler;
+    sigaction(SIGUSR1, &sa, NULL);
+    TEST_ERROR_AND_FAIL;
+
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR1);
+    sa.sa_mask = mask;
+
+    sigaction(SIGUSR2, &sa, NULL);
+    TEST_ERROR_AND_FAIL;
+    sigaction(SIGTERM, &sa, NULL);
+    TEST_ERROR_AND_FAIL;
+    sigaction(SIGSEGV, &sa, NULL);
+    TEST_ERROR_AND_FAIL;
+  }
 
   while (cont_try < SO_RETRY)
   {
+    if (refused_flag) {
+      int transaction_q = 0, total;
+      struct msg incoming;
+      transaction refused_t;
+
+      refused_flag = 0;
+      transaction_q = msgget(MSG_Q, 0);
+      TEST_ERROR_AND_FAIL;
+
+      msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT);
+      if (errno != ENOMSG) {
+        TEST_ERROR_AND_FAIL;
+      }
+      else
+        fprintf(ERR_FILE, "u%d: no msg was found with my pid type\n", getpid());
+      refused_t = incoming.mtext;
+      total = refused_t.quantita + refused_t.reward;
+      bilancio_corrente += total;
+      fprintf(ERR_FILE, "u%d: aggiunto al bilancio %d\n", getpid(), total);
+      ++cont_try;
+    }
+
     generate_and_send_transaction(nodes, users, book, &block_reached);
 
     /*tempo di attesa dopo l'invio di una transazione*/
@@ -98,7 +129,7 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 {
   /* block_reached e book.size codificati come indici di blocchi (come se fosse un'array di blocchi)
     necessaria conversione in indice per l'array nella shm (array di transazioni) */
-  int i = (*block_reached) * SO_BLOCK_SIZE;
+  int i = *block_reached;
   int size = (*book.size) * SO_BLOCK_SIZE;
   while (i < size) {
     transaction t = book.blocks[i];
@@ -108,7 +139,7 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
     i++;
   }
   /* codifico block_reached come un indice del blocco raggiunto */
-  *block_reached = i / SO_BLOCK_SIZE;
+  *block_reached = i;
   return bilancio;
 }
 
@@ -116,26 +147,8 @@ void usr_handler(int signal) {
   switch (signal) {
   case SIGUSR1:
     /*transazione rifiutata, recupero del credito, incremento del count_try*/
-  {
-    int transaction_q = 0;
-    struct msg incoming;
-    transaction refused_t;
-    transaction_q = msgget(MSG_Q, 0);
-    TEST_ERROR_AND_FAIL;
-
-    msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT);
-    if (errno != ENOMSG) {
-      TEST_ERROR_AND_FAIL;
-    }
-    else
-      fprintf(ERR_FILE, "u%d: no msg was found with my pid type\n", getpid());
-    refused_t = incoming.mtext;
-    bilancio_corrente += (refused_t.quantita + refused_t.reward);
-    /* fprintf(LOG_FILE, "u%d: transazione rifiutata, posso ancora mandare %d volte\n", getpid(), (SO_RETRY - cont_try)); */
-    cont_try++;
-
-  }
-  break;
+    ++refused_flag;
+    break;
   case SIGUSR2:
     /*generazione di una transazione da un segnale*/
     fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...\n");
