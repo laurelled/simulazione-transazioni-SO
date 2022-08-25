@@ -1,7 +1,7 @@
 /*
 #include "../../utils/utils.h"
 #include "../load_constants/load_constants.h"
-#include "../pid_list/pid_list.h"
+#include "../ipc_functions/ipc_functions.h"
 #include "../master_book/master_book.h"
 #include "master_functions/master_functions.h"
 #include "../node/node.h"
@@ -9,7 +9,7 @@
 #include "master.h"
 
 void periodical_update(int* users, int* user_budget, int* node_budget) {
-  int i = block_reached;
+  int i = point_reached;
   int size = *book.size;
   while (i < size) {
     transaction* ptr = book.blocks[i++];
@@ -27,6 +27,6 @@ void periodical_update(int* users, int* user_budget, int* node_budget) {
     index = find_element(nodes.array, *nodes.size, ptr->receiver);
     node_budget[index] += ptr->quantita;
   }
-  block_reached = i;
+  point_reached = i;
 }
 */

@@ -1,7 +1,14 @@
-#include "pid_list.h"
+#include "ipc_functions.h"
+#include "../master_book/master_book.h"
+#include "../master/master.h"
 
 #include <stdlib.h>
 #include <errno.h>
+#include <stdio.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <signal.h>
+
 
 int* init_list(int size) {
   int* new = malloc(sizeof(int) * size);
@@ -82,4 +89,27 @@ int find_element(int* l, int size, int pid) {
   }
 
   return index;
+}
+
+int refuse_transaction(transaction t, int user_q) {
+  struct msg incoming;
+  incoming.mtext = t;
+  incoming.mtype = t.sender;
+  if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+    if (errno != EAGAIN) {
+      return -1;
+    }
+    else {
+      return 1;
+    }
+  }
+  else {
+    if (kill(t.sender, 0) == -1 && errno == ESRCH) {
+      fprintf(stderr, "l'utente è già morto bruh\n");
+      return -1;
+    }
+    kill(t.sender, SIGUSR1);
+    return 0;
+  }
+
 }

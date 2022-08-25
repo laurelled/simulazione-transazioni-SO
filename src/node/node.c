@@ -1,7 +1,7 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
 #include "../master/master.h"
-#include "../pid_list/pid_list.h"
+#include "../ipc_functions/ipc_functions.h"
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -27,7 +27,7 @@ extern int SO_MAX_TRANS_PROC_NSEC;
 extern int SO_MIN_TRANS_PROC_NSEC;
 extern int SO_HOPS;
 
-/* IPC memories */
+/* IPC */
 static int queue_id;
 static int pipe_fd;
 

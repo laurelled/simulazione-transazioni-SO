@@ -1,6 +1,6 @@
 #include "../utils/utils.h"
 #include "../load_constants/load_constants.h"
-#include "../pid_list/pid_list.h"
+#include "../ipc_functions/ipc_functions.h"
 #include "../master_book/master_book.h"
 #include "master_functions/master_functions.h"
 #include "../node/node.h"
@@ -80,10 +80,14 @@ static int simulation_seconds = 0;
 int periodical_update(int block_reached) {
   int index;
   transaction t;
-  int size = *book.size * SO_BLOCK_SIZE;
+  int size = *(book.size) * SO_BLOCK_SIZE;
 
   while (block_reached < size) {
     t = book.blocks[block_reached];
+    if (t.sender != -1)
+      fprintf(LOG_FILE, "block_reached=%d, TS %ld, u%d -> u%d, %d$, taxes: %d$\n", block_reached, t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
+    else
+      fprintf(LOG_FILE, "block_reached=%d, TS %ld, n%d, %d$\n", block_reached, t.timestamp, t.receiver, t.quantita);
     if (t.sender == -1) {
       int nodes_size = *(nodes.size);
       int index = find_element(nodes.array, nodes_size, t.receiver);
@@ -358,7 +362,7 @@ void handler(int signal) {
     TEST_ERROR_AND_FAIL;
 
     msg_num = stats.msg_qnum;
-    /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
+    /* per risolvere il merge dei segnali, il master legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
       int file_descriptors[2];
       int new_node_msg_id;
@@ -374,6 +378,7 @@ void handler(int signal) {
         }
         else {
           errno = 0;
+          fprintf(ERR_FILE, "did not found anything\n");
           break;
         }
       }
@@ -420,6 +425,7 @@ void handler(int signal) {
         }
         sops.sem_num = ID_READY_ALL;
         sops.sem_op = 1;
+        errno = 0;
         while (semop(sem_id, &sops, 1) == -1 && errno == EINTR);
         if (errno != EINTR) {
           TEST_ERROR_AND_FAIL;
@@ -438,8 +444,7 @@ void handler(int signal) {
           int i = 0;
           while (close(file_descriptors[0]) == -1) {
             if (errno != EINTR) {
-              TEST_ERROR;
-              exit(EXIT_FAILURE);
+              TEST_ERROR_AND_FAIL;
             }
           }
           errno = 0;
@@ -481,16 +486,18 @@ void handler(int signal) {
         }
       }
       else {
+        int check;
         int sender = incoming_t.sender;
         if (kill(sender, 0) != -1) {
-          message.mtype = sender;
-          msgsnd(refused_queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
-          TEST_ERROR_AND_FAIL;
-          if (!errno) {
-            kill(sender, SIGUSR1);
+          int user_q;
+          if ((user_q = msgget(getpid() - 1, 0)) == -1) {
+            TEST_ERROR_AND_FAIL;
           }
-          else {
-            fprintf(ERR_FILE, "master: refused_queue_id is full\n");
+          if ((check = refuse_transaction(incoming_t, user_q)) == -1) {
+            master_cleanup();
+          }
+          else if (check == 1) {
+            fprintf(ERR_FILE, "master : cannot refuse transaction\n");
           }
         }
       }
@@ -777,7 +784,6 @@ int main() {
     fprintf(ERR_FILE, "[%d] master: sono uscito\n", simulation_seconds);
     alarm(0);
     stop_simulation();
-
     {
       int terminated_p;
       int status;
@@ -826,10 +832,9 @@ int main() {
   msgctl(queue_id, IPC_RMID, NULL);
   TEST_ERROR;
 
-  if (semctl(sem_id, 0, IPC_RMID) == -1) {
-    fprintf(ERR_FILE, "master: could not free sem %d, please check ipcs and remove it.\n", sem_id);
-    master_cleanup();
-  }
+  semctl(sem_id, 0, IPC_RMID);
+  TEST_ERROR_AND_FAIL;
+
   fprintf(LOG_FILE, "Completed simulation. Exiting...\n");
   exit(EXIT_SUCCESS);
 }

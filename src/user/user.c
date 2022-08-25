@@ -1,7 +1,7 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
 #include "user.h"
-#include "../pid_list/pid_list.h"
+#include "../ipc_functions/ipc_functions.h"
 #include "../master/master.h"
 
 #include <signal.h>
@@ -174,12 +174,12 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
     transaction t;
     struct msg message;
     /* estrazione di un destinatario casuale*/
-    /* estrazione di un nodo casuale*/
     random_user = random_element(users, SO_USERS_NUM);
     if (random_user == -1) {
       fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
       exit(EXIT_SUCCESS);
     }
+    /* estrazione di un nodo casuale*/
     size = *(nodes.size);
     random_node = random_element(nodes.array, size);
     if (random_node == -1) {
@@ -198,7 +198,6 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
 
     /* creazione di una transazione e invio di tale al nodo generato*/
     new_transaction(&t, getpid(), random_user, cifra_utente, reward);
-
     /* system V message queue */
     /* ricerca della coda di messaggi del nodo random */
     if ((queue_id = msgget(random_node, 0)) == -1) {
@@ -219,6 +218,7 @@ void generate_and_send_transaction(struct nodes nodes, int* users, struct master
       }
     }
     else {
+      cont_try = 0;
       bilancio_corrente -= total_quantity;
       kill(random_node, SIGUSR1);
     }
