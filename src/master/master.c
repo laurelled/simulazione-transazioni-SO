@@ -30,11 +30,8 @@
 
 #define MAX_USERS_TO_PRINT 10
 
-#define ID_MEM 1
 #define ID_READY_NODE 2
 #define NUM_SEM 3
-
-#define IPC_CREATION_FLAGS IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR
 
 #define REGISTRY_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
 
