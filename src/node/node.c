@@ -237,7 +237,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
           int master_q = 0;
           master_q = msgget(getppid(), 0);
           TEST_ERROR_AND_FAIL;
-          incoming.mtype = getppid();
+          incoming.mtype = 1;
           msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
           TEST_ERROR_AND_FAIL;
 
