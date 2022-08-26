@@ -32,7 +32,6 @@ static int block_reached;
 
 static int bilancio_corrente;
 static int cont_try;
-static int trans_send;
 
 static struct nodes nodes;
 static struct master_book book;
@@ -108,11 +107,9 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
       refused_t = incoming.mtext;
       total = refused_t.quantita + refused_t.reward;
       bilancio_corrente += total;
-      ++cont_try;
     }
 
     generate_and_send_transaction(nodes, users, book, &block_reached);
-    trans_send++;
     /*tempo di attesa dopo l'invio di una transazione*/
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
   }
@@ -145,7 +142,6 @@ void usr_handler(int signal) {
     /*generazione di una transazione alla ricezione del segnale SIGUSR2*/
     fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...\n");
     generate_and_send_transaction(nodes, users, book, &block_reached);
-    trans_send++;
     break;
   case SIGTERM:
     /*segnale per la terminazione dell'esecuzione*/
