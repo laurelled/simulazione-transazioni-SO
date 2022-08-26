@@ -19,15 +19,6 @@
 #include <string.h>
 #include <strings.h>
 
-#define TEST_ERROR_AND_FAIL    if (errno && errno != ESRCH && errno != EAGAIN) {fprintf(ERR_FILE, \
-                       "%s:%d: PID=%5d: Error %d (%s)\n",\
-                       __FILE__,\
-                       __LINE__,\
-                       getpid(),\
-                       errno,\
-                       strerror(errno)); \
-                       exit(EXIT_FAILURE); }
-
 /*Variabili statici per ogni processo utente*/
 extern int SO_BUDGET_INIT;
 extern int SO_USERS_NUM;
@@ -49,6 +40,9 @@ static int* users;
 
 volatile sig_atomic_t refused_flag;
 
+static void cleanup() {
+  exit(EXIT_FAILURE);
+}
 
 void usr_handler(int);
 int calcola_bilancio(int, struct master_book, int*);
@@ -114,7 +108,6 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
       refused_t = incoming.mtext;
       total = refused_t.quantita + refused_t.reward;
       bilancio_corrente += total;
-      /*fprintf(ERR_FILE, "u%d: aggiunto al bilancio %d\n", getpid(), total);*/
       ++cont_try;
     }
 
@@ -129,8 +122,6 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
 
 int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
 {
-  /* block_reached e book.size codificati come indici di blocchi (come se fosse un'array di blocchi)
-    necessaria conversione in indice per l'array nella shm (array di transazioni) */
   int i = *block_reached;
   int size = (*book.size) * SO_BLOCK_SIZE;
   while (i < size) {
@@ -151,7 +142,7 @@ void usr_handler(int signal) {
     ++refused_flag;
     break;
   case SIGUSR2:
-    /*generazione di una transazione da un segnale*/
+    /*generazione di una transazione alla ricezione del segnale SIGUSR2*/
     fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...\n");
     generate_and_send_transaction(nodes, users, book, &block_reached);
     trans_send++;

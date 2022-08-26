@@ -4,6 +4,8 @@
 #include <time.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/msg.h>
+#include <signal.h>
 #include <stdlib.h>
 
 /*
@@ -34,6 +36,29 @@ void new_transaction(transaction* new, int sender, int reciever, int quantita, i
   new->reward = reward;
 }
 
+int refuse_transaction(transaction t, int user_q) {
+  struct msg incoming;
+  incoming.mtext = t;
+  incoming.mtype = t.sender;
+  if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+    return -1;
+  }
+  if (kill(t.sender, 0) == -1) {
+    return -1;
+  }
+  kill(t.sender, SIGUSR1);
+
+  return 0;
+}
+
+void print_transaction(transaction t) {
+  if (t.sender != -1)
+    fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
+  else
+    fprintf(LOG_FILE, "TS %ld, n%d, %d$\n", t.timestamp, t.receiver, t.quantita);
+
+}
+
 int find_element_in_book(struct master_book book, int limit, transaction x) {
   int found = 0;
   while (limit >= 0 && !found) {
@@ -48,10 +73,3 @@ int find_element_in_book(struct master_book book, int limit, transaction x) {
   return found;
 }
 
-void print_transaction(transaction t) {
-  if (t.sender != -1)
-    fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
-  else
-    fprintf(LOG_FILE, "TS %ld, n%d, %d$\n", t.timestamp, t.receiver, t.quantita);
-
-}

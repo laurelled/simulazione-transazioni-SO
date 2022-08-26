@@ -43,9 +43,14 @@ volatile sig_atomic_t sigusr2_flag;
 
 
 static void cleanup() {
-  free(transaction_pool);
+  if (transaction_pool != NULL)
+    free(transaction_pool);
+  if (friends != NULL)
+    free(friends);
+
   close(pipe_fd);
   msgctl(queue_id, IPC_RMID, NULL);
+  exit(EXIT_FAILURE);
 }
 
 static void sig_handler(int sig) {
@@ -58,161 +63,15 @@ static void sig_handler(int sig) {
     cleanup();
     exit(nof_transaction);
   case SIGUSR1:
-  {
-    struct msqid_ds stats;
-    msgqnum_t msg_num;
-    sigusr1_flag = 0;
-
-    bzero(&stats, sizeof(struct msqid_ds));
-    if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
-      fprintf(ERR_FILE, "node n%d sig_handler: reading error of IPC_STAT of queue with id %d. error %s.\n", getpid(), queue_id, strerror(errno));
-      cleanup();
-      exit(EXIT_FAILURE);
-    }
-    msg_num = stats.msg_qnum;
-    /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
-    while (msg_num-- > 0) {
-      transaction t;
-      struct msg incoming;
-
-      if (msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
-        if (errno != ENOMSG) {
-          fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
-          cleanup();
-
-          exit(EXIT_FAILURE);
-        }
-        break;
-      }
-      t = incoming.mtext;
-      if (t.timestamp == 0) {
-        fprintf(ERR_FILE, "n%d: ricevuta transazione vuota\n", getpid());
-        print_transaction(t);
-      }
-      /*gestione invio transazione al master se SO_HOPS raggiunti */
-      if (incoming.mtype == SO_HOPS + 1) {
-        int master_q = 0;
-        if ((master_q = msgget(getppid(), 0)) == -1) {
-          fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
-          cleanup();
-          exit(EXIT_FAILURE);
-        }
-        incoming.mtype = getppid();
-        if (msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-          if (errno != EAGAIN) {
-            fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
-            cleanup();
-
-            exit(EXIT_FAILURE);
-          }
-          else {
-            fprintf(ERR_FILE, "n%d: master queue full\n", getpid());
-          }
-        }
-        else {
-          kill(getppid(), SIGUSR1);
-        }
-      }
-      /*gestione transaction_pool piena */
-      else if (nof_transaction == SO_TP_SIZE) {
-        int chosen_friend;
-        int friend_queue = 0;
-        chosen_friend = random_element(friends, nof_friends);
-        if (chosen_friend == -1) {
-          fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
-          cleanup();
-          exit(EXIT_FAILURE);
-        }
-        if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
-          fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
-          cleanup();
-          exit(EXIT_FAILURE);
-        }
-        incoming.mtype += 1;
-        if (msgsnd(friend_queue, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-          if (errno != EAGAIN) {
-            fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
-            cleanup();
-            exit(EXIT_FAILURE);
-          }
-          else {
-            int user_q = 0;
-            if ((user_q = msgget(MSG_Q, 0)) == -1) {
-              fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
-              cleanup();
-              exit(EXIT_FAILURE);
-            }
-            refuse_transaction(t, user_q);
-          }
-        }
-        kill(chosen_friend, SIGUSR1);
-      }
-      /* accetta la transazione nella sua transaction pool*/
-      else {
-        transaction_pool[nof_transaction++] = t;
-      }
-    }
-  }
-  break;
+    ++sigusr1_flag;
+    break;
   case SIGUSR2:
-  {
-    int nodo_ricevuto = 0;
-    sigusr2_flag = 0;
-    while (read(pipe_fd, &nodo_ricevuto, sizeof(int)) == -1) {
-      if (errno != EINTR) {
-        TEST_ERROR;
-        cleanup();
-        exit(EXIT_FAILURE);
-      }
-      errno = 0;
-    }
-    friends[nof_friends] = nodo_ricevuto;
-    ++nof_friends;
-  }
-  break;
+    ++sigusr2_flag;
+    break;
   case SIGALRM:
-  {
-    alarm_flag = 0;
-    /*gestione invio transazione periodico*/
-    if (nof_transaction > 0) {
-      sigset_t mask;
-      int chosen_friend;
-      int friend_queue;
-      struct msg outcoming;
-
-      bzero(&mask, sizeof(sigset_t));
-
-      outcoming.mtype = 1;
-      outcoming.mtext = transaction_pool[nof_transaction - 1];
-      chosen_friend = random_element(friends, nof_friends);
-      if (chosen_friend == -1) {
-        fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
-        cleanup();
-        exit(EXIT_FAILURE);
-      }
-
-      if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
-        fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
-        cleanup();
-        exit(EXIT_FAILURE);
-      }
-
-      if (msgsnd(friend_queue, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-        if (errno != EAGAIN) {
-          fprintf(ERR_FILE, "node n%d: SIGALRM, recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
-
-          cleanup();
-          exit(EXIT_FAILURE);
-        }
-      }
-      else {
-        --nof_transaction;
-        kill(chosen_friend, SIGUSR1);
-      }
-    }
-  }
-  alarm(1);
-  break;
+    ++alarm_flag;
+    alarm(1);
+    break;
   case SIGSEGV:
     fprintf(ERR_FILE, "n%d: recieved a SIGSEGV, stopping simulation.\n", getpid());
     cleanup();
@@ -256,7 +115,7 @@ static void generate() {
   sigaddset(&mask, SIGALRM);
   sigaddset(&mask, SIGUSR2);
   act.sa_handler = sig_handler;
-  act.sa_flags = 0;
+  act.sa_flags = SA_NODEFER;
   act.sa_mask = mask;
 
   if (sigaction(SIGUSR1, &act, NULL) < 0) {
@@ -284,7 +143,7 @@ static void generate() {
     exit(EXIT_FAILURE);
   }
 
-  sigemptyset(&mask);
+  sigfillset(&mask);
   act.sa_mask = mask;
   act.sa_flags = 0;
   if (sigaction(SIGTERM, &act, NULL) < 0) {
@@ -314,9 +173,7 @@ void simulate_processing(struct master_book book, int sem_id) {
 
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
   /* ID_MEM ottenuto tramite master.h */
-  sops.sem_num = ID_MEM;
-  sops.sem_op = -1;
-  semop(sem_id, &sops, 1);
+  sem_reserve(sem_id, ID_MEM);
 
   {
     int i = 0, gain = 0, block_i, size = *(book.size);
@@ -335,6 +192,8 @@ void simulate_processing(struct master_book book, int sem_id) {
       new_transaction(&node_gain, SELF_SENDER, getpid(), gain, 0);
       book.blocks[block_i + SO_BLOCK_SIZE - 1] = node_gain;
       (*book.size)++;
+
+      /* shift di transaction_pool di SO_BLOCK_SIZE - 1 transazioni */
       memmove(transaction_pool, transaction_pool + SO_BLOCK_SIZE - 1, sizeof(transaction) * (nof_transaction + 1 - SO_BLOCK_SIZE));
       nof_transaction -= (SO_BLOCK_SIZE - 1);
     }
@@ -344,15 +203,7 @@ void simulate_processing(struct master_book book, int sem_id) {
     }
   }
 
-  sops.sem_op = 1;
-  while (semop(sem_id, &sops, 1) == -1) {
-    if (errno != EINTR) {
-      TEST_ERROR;
-      cleanup();
-      exit(EXIT_FAILURE);
-    }
-    errno = 0;
-  }
+  sem_release(sem_id, ID_MEM);
 
   sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
@@ -371,50 +222,172 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   nof_friends = SO_NUM_FRIENDS;
   pipe_fd = pipe_read;
 
-  if ((sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR)) == -1) {
-    fprintf(ERR_FILE, "node n%d: error retrieving parent semaphore (%s)\n", getpid(), strerror(errno));
-    exit(EXIT_FAILURE);
-  }
+  sem_id = semget(getppid(), 0, S_IRUSR | S_IWUSR);
+  TEST_ERROR_AND_FAIL;
 
   generate();
 
-  if ((book.blocks = shmat(shm_book_id, NULL, 0)) == NULL) {
-    fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
-    cleanup();
-    exit(EXIT_FAILURE);
-  }
-
-  if ((book.size = shmat(shm_book_size_id, NULL, 0)) == NULL) {
-    fprintf(ERR_FILE, "node: the process cannot be attached to the array shared memory.\n");
-    cleanup();
-    exit(EXIT_FAILURE);
-  }
+  book.blocks = shmat(shm_book_id, NULL, 0);
+  TEST_ERROR_AND_FAIL;
+  book.size = shmat(shm_book_size_id, NULL, 0);
+  TEST_ERROR_AND_FAIL;
 
   /* ID_READY_ALL ottenuto da master.h */
-  sops.sem_num = ID_READY_ALL;
-  sops.sem_op = -1;
-  while (semop(sem_id, &sops, 1) == -1) {
-    if (errno != EINTR) {
-      TEST_ERROR;
-      cleanup();
-      exit(EXIT_FAILURE);
-    }
-    errno = 0;
-  }
-
-  sops.sem_op = 0;
-  while (semop(sem_id, &sops, 1) == -1) {
-    if (errno != EINTR) {
-      TEST_ERROR;
-      cleanup();
-      exit(EXIT_FAILURE);
-    }
-    errno = 0;
-  }
+  sem_reserve(sem_id, ID_READY_ALL);
+  TEST_ERROR;
+  sem_wait_for_zero(sem_id, ID_READY_ALL);
+  TEST_ERROR;
 
   alarm(1);
   while (kill(ppid, 0) != -1 && errno != ESRCH)
   {
+    if (sigusr1_flag) {
+      struct msqid_ds stats;
+      msgqnum_t msg_num;
+
+      sigusr1_flag = 0;
+      bzero(&stats, sizeof(struct msqid_ds));
+      if (msgctl(queue_id, IPC_STAT, &stats) < 0) {
+        fprintf(ERR_FILE, "node n%d sig_handler: reading error of IPC_STAT of queue with id %d. error %s.\n", getpid(), queue_id, strerror(errno));
+        cleanup();
+        exit(EXIT_FAILURE);
+      }
+      msg_num = stats.msg_qnum;
+      /* per risolvere il merge dei segnali, il nodo legge tutti i messaggi presenti nella coda */
+      while (msg_num-- > 0) {
+        transaction t;
+        struct msg incoming;
+
+        if (msgrcv(queue_id, &incoming, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
+          if (errno != ENOMSG) {
+            fprintf(ERR_FILE, "sig_handler n%d: cannot read properly message. %s\n", getpid(), strerror(errno));
+            cleanup();
+
+            exit(EXIT_FAILURE);
+          }
+          break;
+        }
+        t = incoming.mtext;
+        if (t.timestamp == 0) {
+          fprintf(ERR_FILE, "n%d: ricevuta transazione vuota\n", getpid());
+          print_transaction(t);
+        }
+        /*gestione invio transazione al master se SO_HOPS raggiunti */
+        if (incoming.mtype == SO_HOPS + 1) {
+          int master_q = 0;
+          if ((master_q = msgget(getppid(), 0)) == -1) {
+            fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
+            cleanup();
+            exit(EXIT_FAILURE);
+          }
+          incoming.mtype = getppid();
+          if (msgsnd(master_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+            if (errno != EAGAIN) {
+              fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to master: %s.\n", getpid(), strerror(errno));
+              cleanup();
+
+              exit(EXIT_FAILURE);
+            }
+            else {
+              fprintf(ERR_FILE, "n%d: master queue full\n", getpid());
+            }
+          }
+          else {
+            kill(getppid(), SIGUSR1);
+          }
+        }
+        /*gestione transaction_pool piena */
+        else if (nof_transaction == SO_TP_SIZE) {
+          int chosen_friend;
+          int friend_queue = 0;
+          chosen_friend = random_element(friends, nof_friends);
+          if (chosen_friend == -1) {
+            fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
+            cleanup();
+            exit(EXIT_FAILURE);
+          }
+          if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
+            fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
+            cleanup();
+            exit(EXIT_FAILURE);
+          }
+          incoming.mtype += 1;
+          if (msgsnd(friend_queue, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+            if (errno != EAGAIN) {
+              fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
+              cleanup();
+              exit(EXIT_FAILURE);
+            }
+            else {
+              int user_q = 0;
+              if ((user_q = msgget(MSG_Q, 0)) == -1) {
+                fprintf(ERR_FILE, "node n%d: cannot connect to master message queue with key %d.\n", getpid(), getppid());
+                cleanup();
+                exit(EXIT_FAILURE);
+              }
+              refuse_transaction(t, user_q);
+            }
+          }
+          kill(chosen_friend, SIGUSR1);
+        }
+        /* accetta la transazione nella sua transaction pool*/
+        else {
+          transaction_pool[nof_transaction++] = t;
+        }
+      }
+    }
+    if (alarm_flag) {
+      alarm_flag = 0;
+      /*gestione invio transazione periodico*/
+      if (nof_transaction > 0) {
+        sigset_t mask;
+        int chosen_friend;
+        int friend_queue;
+        struct msg outcoming;
+
+        bzero(&mask, sizeof(sigset_t));
+
+        outcoming.mtype = 1;
+        outcoming.mtext = transaction_pool[nof_transaction - 1];
+        chosen_friend = random_element(friends, nof_friends);
+        if (chosen_friend == -1) {
+          fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
+          cleanup();
+          exit(EXIT_FAILURE);
+        }
+
+        if ((friend_queue = msgget(chosen_friend, 0)) == -1) {
+          fprintf(ERR_FILE, "node n%d: cannot connect to friend message queue with key %d (%s).\n", getpid(), chosen_friend, strerror(errno));
+          cleanup();
+          exit(EXIT_FAILURE);
+        }
+
+        if (msgsnd(friend_queue, &outcoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+          if (errno != EAGAIN) {
+            fprintf(ERR_FILE, "node n%d: SIGALRM, recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
+
+            cleanup();
+            exit(EXIT_FAILURE);
+          }
+        }
+        else {
+          --nof_transaction;
+          kill(chosen_friend, SIGUSR1);
+        }
+      }
+    }
+    if (sigusr2_flag) {
+      int nodo_ricevuto = 0;
+      sigusr2_flag = 0;
+      while (read(pipe_fd, &nodo_ricevuto, sizeof(int)) == -1) {
+        if (errno != EINTR) {
+          TEST_ERROR_AND_FAIL;
+        }
+        errno = 0;
+      }
+      friends[nof_friends] = nodo_ricevuto;
+      ++nof_friends;
+    }
     if (nof_transaction < SO_BLOCK_SIZE - 1) {
       pause();
       continue;

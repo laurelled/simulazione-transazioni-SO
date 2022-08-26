@@ -1,7 +1,20 @@
 #ifndef _TRANSACTION_H_
 #define _TRANSACTION_H_
 
+#ifdef CONF1
 #define SO_BLOCK_SIZE 10
+#define SO_REGISTRY_SIZE 1000
+#elseif CONF2
+#define SO_BLOCK_SIZE 100
+#define SO_REGISTRY_SIZE 10000
+#elseif CONF3
+#define SO_BLOCK_SIZE 10
+#define SO_REGISTRY_SIZE 1000
+#else
+#define SO_BLOCK_SIZE 10
+#define SO_REGISTRY_SIZE 1000
+#endif
+
 
 typedef struct
 {
@@ -26,6 +39,7 @@ struct msg {
 
 void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);
 void print_transaction(transaction t);
+int refuse_transaction(transaction transaction, int user_q);
 int find_element_in_book(struct master_book book, int limit, transaction x);
 
 #endif

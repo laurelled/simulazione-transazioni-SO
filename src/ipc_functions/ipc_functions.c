@@ -7,101 +7,36 @@
 #include <stdio.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
+#include <sys/sem.h>
+#include <string.h>
 #include <signal.h>
 
+int sem_reserve(int sem_id, int sem_num) {
+  struct sembuf sops;
+  bzero(&sops, sizeof(struct sembuf));
 
-int* init_list(int size) {
-  int* new = malloc(sizeof(int) * size);
-  if (new != NULL) {
-    int i = 0;
-    while (i < size) {
-      new[i] = 0;
-      i++;
-    }
-  }
+  sops.sem_num = sem_num;
+  sops.sem_op = -1;
 
-  return new;
+  return semop(sem_id, &sops, 1);
 }
 
-int* expand_list(int* l, int old_size, int new_size) {
-  int* expanded = realloc(l, new_size);
+int sem_release(int sem_id, int sem_num) {
+  struct sembuf sops;
+  bzero(&sops, sizeof(struct sembuf));
 
-  if (expanded != NULL) {
-    int i = old_size;
-    while (i < new_size) {
-      expanded[i] = 0;
-      i++;
-    }
-  }
-  return expanded;
+  sops.sem_num = sem_num;
+  sops.sem_op = 1;
+
+  return semop(sem_id, &sops, 1);
 }
 
-void free_list(int* l) {
-  free(l);
-}
+int sem_wait_for_zero(int sem_id, int sem_num) {
+  struct sembuf sops;
+  bzero(&sops, sizeof(struct sembuf));
 
-int random_element(int* list, int size) {
-  int random_el = 0, found = 0, dim = size;
-  int* cpy = malloc(sizeof(int) * size);
-  if (cpy == NULL) {
-    return -1;
-  }
+  sops.sem_num = sem_num;
+  sops.sem_op = 0;
 
-  {
-    register i = 0;
-    while (i < dim) {
-      cpy[i] = list[i];
-      i++;
-    }
-  }
-
-  /* ogni volta che il ciclo trova un processo terminato, lo separa dai processi attivi, spostando in fondo alla lista.
-  In questo modo riduce il sottoarray da cui cercare i processi attivi */
-  do {
-    int r_index = 0;
-    srand(clock());
-    r_index = (rand() % dim);
-    if (r_index >= 0 && r_index < dim) {
-      found = 1; /* imposto found a true */
-      random_el = cpy[r_index];
-      if (getpid() == random_el || (kill(random_el, 0) == -1 && errno == ESRCH)) {
-        found = 0; /* l'elemento corrente non può essere scelto */
-        dim--;
-        cpy[r_index] = cpy[dim];
-        cpy[dim] = random_el;
-      }
-    }
-  } while (dim > 0 && !found); /* evita di estrarre lo stesso processo in cui ci troviamo o di trovare un utente terminato*/
-
-  free(cpy);
-  return dim > 0 ? random_el : -1;
-}
-
-int find_element(int* l, int size, int pid) {
-  int* ptr = l;
-  int index = -1;
-  int i = 0;
-  while (i < size && index == -1) {
-    if (ptr[i] == pid) {
-      index = i;
-    }
-    i++;
-  }
-
-  return index;
-}
-
-int refuse_transaction(transaction t, int user_q) {
-  struct msg incoming;
-  incoming.mtext = t;
-  incoming.mtype = t.sender;
-  if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-    return -1;
-  }
-  if (kill(t.sender, 0) == -1) {
-    return -1;
-  }
-  kill(t.sender, SIGUSR1);
-
-  return 0;
+  return semop(sem_id, &sops, 1);
 }
