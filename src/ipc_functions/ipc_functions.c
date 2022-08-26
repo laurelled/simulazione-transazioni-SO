@@ -96,20 +96,12 @@ int refuse_transaction(transaction t, int user_q) {
   incoming.mtext = t;
   incoming.mtype = t.sender;
   if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-    if (errno != EAGAIN) {
-      return -1;
-    }
-    else {
-      return 1;
-    }
+    return -1;
   }
-  else {
-    if (kill(t.sender, 0) == -1 && errno == ESRCH) {
-      fprintf(stderr, "l'utente è già morto bruh\n");
-      return -1;
-    }
-    kill(t.sender, SIGUSR1);
-    return 0;
+  if (kill(t.sender, 0) == -1) {
+    return -1;
   }
+  kill(t.sender, SIGUSR1);
 
+  return 0;
 }
