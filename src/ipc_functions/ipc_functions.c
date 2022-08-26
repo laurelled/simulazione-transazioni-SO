@@ -65,7 +65,7 @@ int random_element(int* list, int size) {
       found = 1; /* imposto found a true */
       random_el = cpy[r_index];
       if (getpid() == random_el || (kill(random_el, 0) == -1 && errno == ESRCH)) {
-        found = 0;
+        found = 0; /* l'elemento corrente non può essere scelto */
         dim--;
         cpy[r_index] = cpy[dim];
         cpy[dim] = random_el;
