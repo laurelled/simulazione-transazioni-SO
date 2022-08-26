@@ -39,9 +39,7 @@ static int* users;
 
 volatile sig_atomic_t refused_flag;
 
-static void cleanup() {
-  exit(EXIT_FAILURE);
-}
+static void cleanup() {}
 
 void usr_handler(int);
 int calcola_bilancio(int, struct master_book, int*);
