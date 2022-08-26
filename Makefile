@@ -8,14 +8,17 @@ INCLUDES = src/**/*.h
 
 COMMON_DEPS = $(INCLUDES) Makefile
 
+conf1: CFLAGS += -DCONF1
 conf1: master ${COMMON_DEPS}
-	${CC} -DCONF1 build/*.o -o run.out
+	${CC} build/*.o -o run.out
 
+conf2: CFLAGS += -DCONF2
 conf2: master ${COMMON_DEPS}
 	${CC} -DCONF2 build/*.o -o run.out
 
+conf3: CFLAGS += -DCONF3
 conf3: master ${COMMON_DEPS}
-	${CC} -DCONF3 build/*.o -o run.out
+	${CC} build/*.o -o run.out
 
 exe: master ${COMMON_DEPS}
 	${CC} build/*.o -o run.out
