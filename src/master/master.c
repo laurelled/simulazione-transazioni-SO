@@ -31,7 +31,7 @@
                        getpid(),\
                        errno,\
                        strerror(errno)); \
-                       master_cleanup(); }
+                       cleanup(); }
 
 #define SIM_END_SEC 0
 #define SIM_END_USR 1
@@ -76,7 +76,7 @@ volatile sig_atomic_t periodical_flag;
 static int inactive_users;
 static int simulation_seconds = 0;
 
-void master_cleanup();
+static void cleanup();
 
 int periodical_update(int block_reached) {
   int index;
@@ -95,11 +95,6 @@ int periodical_update(int block_reached) {
       int tmp = user_budget[index];
       index = find_element(users, SO_USERS_NUM, t.sender);
       user_budget[index] -= total_quantity;
-      if (tmp > 0 && user_budget[index] < 0) {
-        fprintf(LOG_FILE, "u%d budget was %d (index %d) | ", users[index], tmp, block_reached);
-        print_transaction(t);
-        master_cleanup();
-      }
       index = find_element(users, SO_USERS_NUM, t.receiver);
       user_budget[index] += t.quantita;
     }
@@ -133,7 +128,7 @@ void stop_simulation() {
   fprintf(ERR_FILE, "ho finito il ciclo dello stop dei nodi\n");
 }
 
-void master_cleanup() {
+static void cleanup() {
   sigset_t mask;
   int i = 0;
   alarm(0);
@@ -332,7 +327,7 @@ void handler(int signal) {
     alarm(1);
     break;
   case SIGINT:
-    master_cleanup();
+    cleanup();
     break;
   case SIGUSR2:
     fprintf(ERR_FILE, "[%ld] master: sono stato notificato da un nodo che la size è stata superata\n", clock() / CLOCKS_PER_SEC);
@@ -368,7 +363,7 @@ void handler(int signal) {
 
       if (pipe(file_descriptors) == -1) {
         TEST_ERROR_AND_FAIL;
-        master_cleanup();
+        cleanup();
       }
 
       if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
@@ -452,7 +447,7 @@ void handler(int signal) {
             int node_random = random_element(nodes.array, *(nodes.size));
             if (node_random == -1) {
               fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
-              master_cleanup();
+              cleanup();
             }
             if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
               int index = find_element(nodes.array, *(nodes.size), node_random);
@@ -485,18 +480,19 @@ void handler(int signal) {
         }
       }
       else {
-        int check;
         int sender = incoming_t.sender;
         if (kill(sender, 0) != -1) {
           int user_q;
-          if ((user_q = msgget(getpid() - 1, 0)) == -1) {
-            TEST_ERROR_AND_FAIL;
-          }
-          if ((check = refuse_transaction(incoming_t, user_q)) == -1) {
-            master_cleanup();
-          }
-          else if (check == 1) {
-            fprintf(ERR_FILE, "master : cannot refuse transaction\n");
+          user_q = msgget(getpid() - 1, 0);
+          TEST_ERROR_AND_FAIL;
+          if (refuse_transaction(incoming_t, user_q) == -1) {
+            if (errno != EAGAIN) {
+              TEST_ERROR;
+              cleanup();
+            }
+            else {
+              fprintf(ERR_FILE, "master: refused transaction queue was full. Check ipcs usage.\n");
+            }
           }
         }
       }
@@ -507,7 +503,7 @@ void handler(int signal) {
   default:
     fprintf(LOG_FILE, "master: signal %d not handled it should be blocked", signal);
     stop_simulation();
-    master_cleanup();
+    cleanup();
     break;
   }
 }
@@ -612,20 +608,20 @@ int main() {
 
   if (sigaction(SIGALRM, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGALRM.\n");
-    master_cleanup();
+    cleanup();
   }
   if (sigaction(SIGUSR2, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR2.\n");
-    master_cleanup();
+    cleanup();
   }
   if (sigaction(SIGINT, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGINT.\n");
-    master_cleanup();
+    cleanup();
   }
   act.sa_flags = SA_NODEFER;
   if (sigaction(SIGUSR1, &act, NULL) < 0) {
     fprintf(ERR_FILE, "master: could not associate handler to SIGUSR1.\n");
-    master_cleanup();
+    cleanup();
   }
   /* Fine handling segnali */
 
@@ -635,12 +631,12 @@ int main() {
     int child;
     if (pipe(fd) == -1) {
       fprintf(ERR_FILE, "master: error while creating pipe in iteration %d/%d", i + 1, SO_NODES_NUM);
-      master_cleanup();
+      cleanup();
     }
     switch ((child = fork())) {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for node creation iteration %d/%d.\n", i + 1, SO_NODES_NUM);
-      master_cleanup();
+      cleanup();
 
     case 0:
     {
@@ -668,7 +664,7 @@ int main() {
     default:
       if (close(fd[0]) == -1) {
         fprintf(ERR_FILE, "master: cannot close fd read end");
-        master_cleanup();
+        cleanup();
       }
       nodes_write_fd[i] = fd[1];
       nodes.array[i] = child;
@@ -692,7 +688,7 @@ int main() {
     switch ((child = fork())) {
     case -1:
       fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
-      master_cleanup();
+      cleanup();
 
     case 0:
     {
@@ -742,7 +738,7 @@ int main() {
       if (periodical_flag) {
         periodical_flag = 0;
         block_reached = periodical_update(block_reached);
-        /*periodical_print();*/
+        periodical_print();
       }
       terminated_p = wait(&status);
       if (terminated_p == -1) {
@@ -755,14 +751,14 @@ int main() {
         if (WEXITSTATUS(status) == EXIT_FAILURE) {
           fprintf(ERR_FILE, "Child %d encountered an error. Stopping simulation\n", terminated_p);
           free(nof_transactions);
-          master_cleanup();
+          cleanup();
         }
         else {
           int size = *(nodes.size);
           int node_index = 0;
           if ((node_index = find_element(nodes.array, size, terminated_p)) != -1) {
             fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
-            master_cleanup();
+            cleanup();
           }
           else {
             inactive_users++;
