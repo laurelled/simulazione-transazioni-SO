@@ -63,7 +63,7 @@ static int refused_queue_id = -1;
 
 static int sem_id = -1;
 
-static volatile sig_atomic_t periodical_flag;
+static int periodical_flag;
 
 int periodical_update(int block_reached) {
   int index;
@@ -91,35 +91,29 @@ int periodical_update(int block_reached) {
 }
 
 void stop_simulation() {
-  sigset_t mask;
   int size;
   int i = 0;
   int child = 0;
 
-  bzero(&mask, sizeof(sigset_t));
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGINT);
   while ((child = users[i]) != 0 && i < SO_USERS_NUM) {
     i++;
     kill(child, SIGTERM);
   }
-  fprintf(ERR_FILE, "ho finito il ciclo dello stop degli utenti\n");
   i = 0;
-  errno = 0;
   size = *(nodes.size);
   while ((child = nodes.array[i]) != 0 && i < size) {
     i++;
     kill(child, SIGTERM);
   }
-  fprintf(ERR_FILE, "ho finito il ciclo dello stop dei nodi\n");
+
+  /* resetting errno as some kill might have failed */
+  errno = 0;
 }
 
 static void cleanup() {
   sigset_t mask;
   int i = 0;
   alarm(0);
-
-  fprintf(ERR_FILE, "master: richiamato master cleanup\n");
 
   bzero(&mask, sizeof(sigset_t));
   sigemptyset(&mask);
@@ -302,149 +296,43 @@ void handler(int signal) {
     break;
   case SIGUSR1:
   {
-    /*notifica per la creazione di un nuovo nodo amico*/
-    int child;
-    struct msg message;
-    struct msqid_ds stats;
-    transaction incoming_t;
+    /* Creazione di un nuovo nodo*/
     msgqnum_t msg_num;
-    struct sembuf sops;
-    sigset_t mask;
-
-    bzero(&mask, sizeof(sigset_t));
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGUSR1);
-    sigprocmask(SIG_BLOCK, &mask, NULL);
-
-    bzero(&sops, sizeof(struct sembuf));
-    bzero(&stats, sizeof(struct sembuf));
+    /* setting errno to 0 as wait was interrupted*/
     errno = 0;
+    {
+      struct msqid_ds stats;
+      bzero(&stats, sizeof(struct sembuf));
+      msgctl(queue_id, IPC_STAT, &stats);
+      TEST_ERROR_AND_FAIL;
 
-    msgctl(queue_id, IPC_STAT, &stats);
-    TEST_ERROR_AND_FAIL;
-
-    msg_num = stats.msg_qnum;
+      msg_num = stats.msg_qnum;
+    }
     /* per risolvere il merge dei segnali, il master legge tutti i messaggi presenti nella coda */
     while (msg_num-- > 0) {
+      struct msg message;
+      transaction incoming_t;
+      int child;
       int file_descriptors[2];
-      int new_node_msg_id;
 
       pipe(file_descriptors);
       TEST_ERROR_AND_FAIL;
 
-      if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT) == -1) {
+      if (msgrcv(queue_id, &message, sizeof(struct msg) - sizeof(long), 0, IPC_NOWAIT) == -1) {
         if (errno != ENOMSG) {
           TEST_ERROR_AND_FAIL;
         }
         else {
-          errno = 0;
-          fprintf(ERR_FILE, "did not find anything\n");
           break;
         }
       }
       incoming_t = message.mtext;
 
-      if (*(nodes.size) < MAX_NODES) {
-        switch ((child = fork())) {
-        case -1:
-          fprintf(ERR_FILE, "%s:%d: fork failed for node creation.\n", __FILE__, __LINE__);
-          CHILD_STOP_SIMULATION;
-          exit(EXIT_FAILURE);
-          break;
-        case 0:
-        {
-          int* friends;
-          struct nodes nodes;
-          /*TODO: non c'è gia una copia nel figlio della shered memory? In teoria è ridondante*/
-          nodes.array = shmat(shm_nodes_array_id, NULL, SHM_RDONLY);
-          TEST_ERROR_AND_FAIL;
-          nodes.size = shmat(shm_nodes_size_id, NULL, SHM_RDONLY);
-          TEST_ERROR_AND_FAIL;
-
-          close(file_descriptors[1]);
-          TEST_ERROR_AND_FAIL;
-          friends = assign_friends(nodes.array, *(nodes.size));
-          if (friends == NULL) {
-            fprintf(ERR_FILE, "n%d: something went wrong while trying to create friends list\n" __FILE__, __LINE__);
-            CHILD_STOP_SIMULATION;
-            exit(EXIT_FAILURE);
-          }
-
-          shmdt(nodes.array);
-          shmdt(nodes.size);
-
-          /* resetto la maschera per evitare di ereditare la maschera del padre */
-          sigfillset(&mask);
-          sigprocmask(SIG_UNBLOCK, &mask, NULL);
-
-          init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
-          break;
-        }
-        default:
-          break;
-        }
-        errno = 0;
-        while (sem_release(sem_id, ID_READY_ALL) == -1 && errno == EINTR);
-        if (errno != EINTR) {
-          TEST_ERROR_AND_FAIL;
-        }
-        errno = 0;
-        while (sem_wait_for_zero(sem_id, ID_READY_ALL) == -1 && errno == EINTR);
-        if (errno != EINTR) {
-          TEST_ERROR_AND_FAIL;
-        }
-        errno = 0;
-
-        {
-          int* lista_nodi = init_list(SO_NUM_FRIENDS);
-          int i = 0;
-          while (close(file_descriptors[0]) == -1) {
-            if (errno != EINTR) {
-              TEST_ERROR_AND_FAIL;
-            }
-          }
-
-          while (i < SO_NUM_FRIENDS) {
-            int node_random = random_element(nodes.array, *(nodes.size));
-            if (node_random == -1) {
-              fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
-              cleanup();
-              exit(EXIT_FAILURE);
-            }
-            if (find_element(lista_nodi, SO_NUM_FRIENDS, node_random) == -1) {
-              int index = find_element(nodes.array, *(nodes.size), node_random);
-              lista_nodi[i] = node_random;
-              while (write(nodes_write_fd[index], &child, sizeof(int)) == -1) {
-                if (errno != EINTR) {
-                  TEST_ERROR_AND_FAIL;
-                }
-              }
-              kill(node_random, SIGUSR2);
-              i++;
-            }
-          }
-          free(lista_nodi);
-          nodes_write_fd[*(nodes.size)] = file_descriptors[1];
-
-          /*msgget del nodo */
-          new_node_msg_id = msgget(child, 0);
-          TEST_ERROR_AND_FAIL;
-          /*msgsnd della transaction al nodo */
-          msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
-          TEST_ERROR_AND_FAIL;
-
-          kill(child, SIGUSR1);
-          TEST_ERROR;
-
-          nodes.array[*(nodes.size)] = child;
-          (*nodes.size)++;
-        }
-      }
-      else {
+      /* refusing transaction if nodes array is full */
+      if (*(nodes.size) == MAX_NODES) {
         int sender = incoming_t.sender;
         if (kill(sender, 0) != -1) {
-          int user_q;
-          user_q = msgget(getpid() - 1, 0);
+          int user_q = msgget(getpid() - 1, 0);
           TEST_ERROR_AND_FAIL;
           if (refuse_transaction(incoming_t, user_q) == -1) {
             if (errno != EAGAIN) {
@@ -455,31 +343,107 @@ void handler(int signal) {
             }
           }
         }
+        break;
+      }
+
+      switch ((child = fork())) {
+      case -1:
+        TEST_ERROR;
+        cleanup();
+        exit(EXIT_FAILURE);
+        break;
+      case 0:
+      {
+        int* friends;
+
+        close(file_descriptors[1]);
+        TEST_ERROR_AND_FAIL;
+
+        {
+          struct nodes nodes;
+          nodes.array = shmat(shm_nodes_array_id, NULL, SHM_RDONLY);
+          TEST_ERROR_AND_FAIL;
+          nodes.size = shmat(shm_nodes_size_id, NULL, SHM_RDONLY);
+          TEST_ERROR_AND_FAIL;
+
+          friends = assign_friends(nodes.array, *(nodes.size));
+          if (friends == NULL) {
+            fprintf(ERR_FILE, "n%d: something went wrong while trying to create friends list\n" __FILE__, __LINE__);
+            CHILD_STOP_SIMULATION;
+            exit(EXIT_FAILURE);
+          }
+
+          shmdt(nodes.array);
+          shmdt(nodes.size);
+        }
+
+        /* resetting signal mask to override the parent's */
+        {
+          sigset_t mask;
+          sigfillset(&mask);
+          sigprocmask(SIG_UNBLOCK, &mask, NULL);
+        }
+
+        init_node(friends, file_descriptors[0], shm_book_id, shm_book_size_id);
+        break;
+      }
+      default:
+        break;
+      }
+
+      sem_release(sem_id, ID_READY_ALL);
+      TEST_ERROR_AND_FAIL;
+      sem_wait_for_zero(sem_id, ID_READY_ALL);
+      TEST_ERROR_AND_FAIL;
+
+      {
+        int i = 0, new_node_msg_id;
+        int* extracted_nodes = init_list(SO_NUM_FRIENDS);
+        TEST_ERROR_AND_FAIL;
+        close(file_descriptors[0]);
+        TEST_ERROR_AND_FAIL;
+
+        /* sending through pipe the new generated node pid to SO_NUM_FRIENDS node */
+        while (i < SO_NUM_FRIENDS) {
+          int node_random = random_element(nodes.array, *(nodes.size));
+          if (node_random == -1) {
+            fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
+            cleanup();
+            exit(EXIT_FAILURE);
+          }
+          /* search if the current node_random wasn't already extracted */
+          if (find_element(extracted_nodes, SO_NUM_FRIENDS, node_random) == -1) {
+            int index = find_element(nodes.array, *(nodes.size), node_random);
+            extracted_nodes[i] = node_random; /* add node_random to the list to avoid duplicates */
+            write(nodes_write_fd[index], &child, sizeof(int));
+            TEST_ERROR_AND_FAIL;
+            kill(node_random, SIGUSR2);
+            ++i;
+          }
+        }
+        free(extracted_nodes);
+        /* write the write end of the pipe in the same index of the node pid in nodes.array */
+        nodes_write_fd[*(nodes.size)] = file_descriptors[1];
+
+        new_node_msg_id = msgget(child, 0);
+        TEST_ERROR_AND_FAIL;
+
+        msgsnd(new_node_msg_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT);
+        TEST_ERROR_AND_FAIL;
+        kill(child, SIGUSR1);
+
+        nodes.array[*(nodes.size)] = child;
+        (*nodes.size)++;
       }
     }
-    sigprocmask(SIG_UNBLOCK, &mask, NULL);
   }
   break;
-  default:
-    fprintf(LOG_FILE, "master: signal %d not handled it should be blocked", signal);
-    cleanup();
-    exit(EXIT_FAILURE);
-    break;
   }
 }
 
 int main() {
-  struct sembuf sops;
-  /* union semun semval; */
-  sigset_t mask;
-  struct sigaction act;
-  struct msqid_ds stats;
-  int* nodes_array;
-  transaction** registry;
   int i = 0;
-  bzero(&stats, sizeof(struct msqid_ds));
-  bzero(&sops, sizeof(struct sembuf));
-  /*bzero(&semval, sizeof(union semun));*/
+
   load_constants();
 
   nodes_write_fd = init_list(MAX_NODES);
@@ -534,8 +498,6 @@ int main() {
   TEST_ERROR_AND_FAIL;
   nodes.array = shmat(shm_nodes_array_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
-  i = 0;
-
   /* Inizializzazione coda di messaggi master-nodi */
   queue_id = msgget(getpid(), IPC_CREATION_FLAGS);
   TEST_ERROR_AND_FAIL;
@@ -544,28 +506,37 @@ int main() {
   TEST_ERROR_AND_FAIL;
 
   /* Handling segnali SIGALRM, SIGINT, SIGUSR1 */
-  bzero(&mask, sizeof(sigset_t));
-  sigemptyset(&mask);
-  act.sa_handler = handler;
-  act.sa_flags = 0;
-  act.sa_mask = mask;
+  {
+    sigset_t mask;
+    struct sigaction act;
+    bzero(&mask, sizeof(sigset_t));
+    sigemptyset(&mask);
+    act.sa_handler = handler;
+    act.sa_flags = 0;
+    act.sa_mask = mask;
+    sigaction(SIGALRM, &act, NULL);
+    TEST_ERROR_AND_FAIL;
+    sigaction(SIGUSR2, &act, NULL);
+    TEST_ERROR_AND_FAIL;
 
-  sigaction(SIGALRM, &act, NULL);
-  TEST_ERROR_AND_FAIL;
-  sigaction(SIGUSR2, &act, NULL);
-  TEST_ERROR_AND_FAIL;
-  sigaction(SIGINT, &act, NULL);
-  TEST_ERROR_AND_FAIL;
+    sigaddset(&mask, SIGALRM);
+    sigaddset(&mask, SIGUSR2);
+    sigaddset(&mask, SIGUSR1);
+    act.sa_mask = mask;
+    sigaction(SIGINT, &act, NULL);
+    TEST_ERROR_AND_FAIL;
 
-  act.sa_flags = SA_NODEFER;
-  sigaction(SIGUSR1, &act, NULL);
-  TEST_ERROR_AND_FAIL;
-  /* Fine handling segnali */
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    sigaddset(&mask, SIGALRM);
+    act.sa_mask = mask;
+    sigaction(SIGUSR1, &act, NULL);
+    TEST_ERROR_AND_FAIL;
+  }
 
   i = 0;
   while (i < SO_NODES_NUM) {
-    int fd[2];
-    int child;
+    int fd[2], child;
     pipe(fd);
     TEST_ERROR_AND_FAIL;
     switch ((child = fork())) {
@@ -576,20 +547,22 @@ int main() {
     case 0:
     {
       int* friends;
-      int* nodes_arr;
-      nodes_arr = shmat(shm_nodes_array_id, NULL, SHM_RDONLY);
-      TEST_ERROR_AND_FAIL;
+
       close(fd[1]);
       TEST_ERROR_AND_FAIL;
 
-      wait_siblings(ID_READY_NODE);
-      if ((friends = assign_friends(nodes_arr, SO_NODES_NUM)) == NULL) {
-        fprintf(ERR_FILE, "%s:%d: n%d: something went wrong with the creation of the friends list\n", __FILE__, __LINE__, getpid());
-        CHILD_STOP_SIMULATION;
-        exit(EXIT_FAILURE);
+      {
+        int* nodes_arr = shmat(shm_nodes_array_id, NULL, SHM_RDONLY);
+        TEST_ERROR_AND_FAIL;
+        wait_siblings(ID_READY_NODE);
+        if ((friends = assign_friends(nodes_arr, SO_NODES_NUM)) == NULL) {
+          fprintf(ERR_FILE, "%s:%d: n%d: something went wrong with the creation of the friends list\n", __FILE__, __LINE__, getpid());
+          CHILD_STOP_SIMULATION;
+          exit(EXIT_FAILURE);
+        }
+        shmdt(nodes_arr);
       }
 
-      shmdt(nodes_arr);
 
       init_node(friends, fd[0], shm_book_id, shm_book_size_id);
       break;
@@ -651,9 +624,11 @@ int main() {
         block_reached = periodical_update(block_reached);
         periodical_print();
       }
+
       terminated_p = wait(&status);
       if (terminated_p == -1) {
         if (errno == EINTR) {
+          /* a signal interrupted the wait, starting the cicle again*/
           continue;
         }
         TEST_ERROR_AND_FAIL;
@@ -680,6 +655,7 @@ int main() {
       }
 
     }
+    alarm(0);
     {
       sigset_t mask;
       bzero(&mask, sizeof(sigset_t));
@@ -688,16 +664,16 @@ int main() {
       sigaddset(&mask, SIGUSR2);
       sigprocmask(SIG_BLOCK, &mask, NULL);
     }
-    fprintf(ERR_FILE, "[%d] master: sono uscito\n", simulation_seconds);
-    alarm(0);
     stop_simulation();
+    fprintf(LOG_FILE, "Simulation ended at %ds\n", simulation_seconds);
+
+    /* wait all of the terminated child */
     {
       int terminated_p;
       int status;
-      int size = *(nodes.size);
-      while ((terminated_p = wait(&status)) != -1 && errno != EINTR) {
+      while ((terminated_p = wait(&status)) != -1) {
         int index;
-        if ((index = find_element(nodes.array, size, terminated_p)) != -1) {
+        if ((index = find_element(nodes.array, *(nodes.size), terminated_p)) != -1) {
           if (WIFEXITED(status)) {
             nof_transactions[index] = WEXITSTATUS(status);
           }
@@ -723,6 +699,7 @@ int main() {
     summary_print(ending_reason, users, user_budget, nodes, node_budget, nof_transactions);
     free(nof_transactions);
   }
+
   users = NULL;
   nodes.array = NULL;
   cleanup();
