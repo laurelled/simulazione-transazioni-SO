@@ -4,20 +4,8 @@
 #include "../ipc_functions/ipc_functions.h"
 #include "../master/master.h"
 
-#include <signal.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <sys/stat.h>
 #include <sys/shm.h>
-#include <sys/sem.h>
-#include <errno.h>
-#include <time.h>
 #include <string.h>
-#include <strings.h>
 
 /*Variabili statici per ogni processo utente*/
 extern int SO_BUDGET_INIT;
