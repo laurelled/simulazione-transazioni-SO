@@ -51,12 +51,20 @@ int refuse_transaction(transaction t, int user_q) {
   return 0;
 }
 
-void print_transaction(transaction t) {
-  if (t.sender != -1)
-    fprintf(LOG_FILE, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
-  else
-    fprintf(LOG_FILE, "TS %ld, n%d, %d$\n", t.timestamp, t.receiver, t.quantita);
+char* print_transaction(transaction t) {
+  char* str;
+  if (t.sender != -1) {
+    str = malloc(sizeof(transaction) + 26 * sizeof(char));
+    if (str != NULL)
+      sprintf(str, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);
+  }
+  else {
+    str = malloc(11 * sizeof(char) + sizeof(long) + sizeof(int) * 2);
+    if (str != NULL)
+      sprintf(str, "TS %ld, n%d, %d$\n", t.timestamp, t.receiver, t.quantita);
+  }
 
+  return str;
 }
 
 int find_element_in_book(struct master_book book, int limit, transaction x) {
