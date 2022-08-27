@@ -18,7 +18,7 @@
 #define SIM_END_USR 1
 #define SIM_END_SIZ 2
 
-#define MAX_USERS_TO_PRINT 10
+#define MAX_USERS_TO_PRINT 20
 
 #define ID_READY_NODE 2
 #define NUM_SEM 3
@@ -160,8 +160,8 @@ void periodical_print() {
   int i = 0;
   printf("NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d\n", (SO_USERS_NUM - inactive_users), *(nodes.size));
   /* budget di ogni processo utente (inclusi quelli terminati prematuramente)*/
-  printf("USERS BUDGETS\n");
-  if (SO_USERS_NUM < MAX_USERS_TO_PRINT) {
+  printf("USERS (%d) BUDGETS\n", SO_USERS_NUM);
+  if (SO_USERS_NUM <= MAX_USERS_TO_PRINT) {
     while (i < SO_USERS_NUM) {
       printf("USER u%d : %d$\n", users[i], user_budget[i]);
       i++;
