@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#define SELF_SENDER -1
+#define ALARM_PERIOD 1
 
 extern int SO_TP_SIZE;
 extern int SO_NUM_FRIENDS;
@@ -69,7 +69,7 @@ static void sig_handler(int sig) {
     break;
   case SIGALRM:
     ++alarm_flag;
-    alarm(1);
+    alarm(ALARM_PERIOD);
     break;
   case SIGSEGV:
     fprintf(ERR_FILE, "n%d: recieved a SIGSEGV, stopping simulation.\n", getpid());
@@ -204,7 +204,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   TEST_ERROR_AND_FAIL;
   sem_wait_for_zero(sem_id, ID_READY_ALL);
 
-  alarm(1);
+  alarm(ALARM_PERIOD);
   while (kill(ppid, 0) != -1 && errno != ESRCH)
   {
     if (sigusr1_flag) {

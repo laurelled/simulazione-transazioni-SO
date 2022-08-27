@@ -53,7 +53,7 @@ int refuse_transaction(transaction t, int user_q) {
 
 char* print_transaction(transaction t) {
   char* str;
-  if (t.sender != -1) {
+  if (t.sender != SELF_SENDER) {
     str = malloc(sizeof(transaction) + 26 * sizeof(char));
     if (str != NULL)
       sprintf(str, "TS %ld, u%d -> u%d, %d$, taxes: %d$\n", t.timestamp, t.sender, t.receiver, t.quantita, t.reward);

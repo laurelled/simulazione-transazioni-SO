@@ -72,7 +72,7 @@ int periodical_update(int block_reached) {
 
   while (block_reached < size) {
     t = book.blocks[block_reached];
-    if (t.sender == -1) {
+    if (t.sender == SELF_SENDER) {
       int nodes_size = *(nodes.size);
       int index = find_element(nodes.array, nodes_size, t.receiver);
       node_budget[index] += t.quantita;
@@ -652,13 +652,12 @@ int main() {
 
     }
     alarm(0);
-
     {
       int sblock[2] = { SIGUSR1, SIGUSR2 };
       sig_block(sblock, 2);
     }
     stop_simulation();
-    fprintf(LOG_FILE, "Simulation ended at %ds\n", simulation_seconds);
+    fprintf(LOG_FILE, "\n\nSIMULATION ENDED IN %dS\n", simulation_seconds);
 
     /* wait all of the terminated child */
     {

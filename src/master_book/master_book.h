@@ -19,6 +19,8 @@
 #endif
 #endif
 
+#define SELF_SENDER -1
+
 
 typedef struct
 {
