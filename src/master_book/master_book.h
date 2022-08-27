@@ -40,7 +40,6 @@ struct master_book {
 
 void new_transaction(transaction* new, int sender, int reciever, int quantita, int reward);
 char* print_transaction(transaction t);
-int refuse_transaction(transaction transaction, int refuse_q);
 int find_element_in_book(struct master_book book, int limit, transaction x);
 
 #endif

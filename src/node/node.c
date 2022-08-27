@@ -233,10 +233,10 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
 
           /* master queue was full, refusing user transaction */
           if (errno == EAGAIN) {
-            int user_q = msgget(REFUSE_Q_KEY, 0);
+            int refuse_q = msgget(REFUSE_Q_KEY, 0);
             TEST_ERROR_AND_FAIL;
 
-            refuse_transaction(incoming_t, user_q);
+            refuse_transaction(incoming_t, refuse_q);
             TEST_ERROR_AND_FAIL;
           }
           /* transaction was successful sent to master queue, sending signal to master */
@@ -265,10 +265,10 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
               exit(EXIT_FAILURE);
             }
             else {
-              int user_q = msgget(REFUSE_Q_KEY, 0);
+              int refuse_q = msgget(REFUSE_Q_KEY, 0);
               TEST_ERROR_AND_FAIL;
 
-              refuse_transaction(incoming_t, user_q);
+              refuse_transaction(incoming_t, refuse_q);
               TEST_ERROR_AND_FAIL;
             }
           }

@@ -4,7 +4,6 @@
 #include "../master_book/master_book.h"
 #include "../node/node.h"
 #include "../user/user.h"
-#include "master.h"
 
 #include <sys/ipc.h>
 #include <sys/sem.h>
@@ -317,9 +316,9 @@ void handler(int signal) {
       if (*(nodes.size) == MAX_NODES) {
         int sender = incoming_t.sender;
         if (kill(sender, 0) != -1) {
-          int user_q = msgget(getpid() - 1, 0);
+          int refuse_q = msgget(getpid() - 1, 0);
           TEST_ERROR_AND_FAIL;
-          if (refuse_transaction(incoming_t, user_q) == -1) {
+          if (refuse_transaction(incoming_t, refuse_q) == -1) {
             if (errno != EAGAIN) {
               TEST_ERROR_AND_FAIL;
             }
