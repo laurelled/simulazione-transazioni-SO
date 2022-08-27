@@ -1,18 +1,11 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
+#include "../constants/constants.h"
 #include "../node/node.h"
 #include "../ipc/ipc.h"
 
 #include <sys/shm.h>
 #include <string.h>
-
-/*Variabili statici per ogni processo utente*/
-extern int SO_BUDGET_INIT;
-extern int SO_USERS_NUM;
-extern int SO_REWARD;
-extern int SO_RETRY;
-extern int SO_MIN_TRANS_GEN_NSEC;
-extern int SO_MAX_TRANS_GEN_NSEC;
 
 static int block_reached;
 

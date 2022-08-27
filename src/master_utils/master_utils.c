@@ -1,3 +1,4 @@
+#include "../constants/constants.h"
 #include "master_utils.h"
 #include <signal.h>
 #include <stdio.h>
@@ -126,7 +127,7 @@ void summary_print(int ending_reason, struct users_ds users, struct nodes_ds nod
     printf("NODE n%d : %d$\n", nodes.array[i], nodes.budgets[i]);
     i++;
   }
-  printf("NUMBER OF INACTIVE users.array: %d\n", users.inactive_count);
+  printf("NUMBER OF INACTIVE USERS: %d\n", users.inactive_count);
   printf("NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n\n\n", book_size);
 
   printf("Number of transactions left per node:\n");

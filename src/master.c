@@ -1,5 +1,5 @@
 #include "./utils/utils.h"
-#include "./load_constants/load_constants.h"
+#include "./constants/constants.h"
 #include "./ipc/ipc.h"
 #include "./master_book/master_book.h"
 #include "./master_utils/master_utils.h"
@@ -16,13 +16,6 @@
 #define NUM_SEM 3
 
 #define REGISTRY_SIZE sizeof(transaction) * SO_BLOCK_SIZE * SO_REGISTRY_SIZE
-
-
-extern int SO_USERS_NUM;
-extern int SO_NODES_NUM;
-extern int SO_SIM_SEC;
-extern int SO_NUM_FRIENDS;
-extern int SO_BUDGET_INIT;
 
 static int simulation_seconds;
 

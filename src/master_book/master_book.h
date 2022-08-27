@@ -1,24 +1,6 @@
 #ifndef _TRANSACTION_H_
 #define _TRANSACTION_H_
 
-#ifdef CONF1
-#define SO_BLOCK_SIZE 100
-#define SO_REGISTRY_SIZE 1000
-#else
-#ifdef CONF2
-#define SO_BLOCK_SIZE 10
-#define SO_REGISTRY_SIZE 10000
-#else
-#ifdef CONF3 
-#define SO_BLOCK_SIZE 10
-#define SO_REGISTRY_SIZE 1000
-#else
-#define SO_BLOCK_SIZE 10
-#define SO_REGISTRY_SIZE 1000
-#endif
-#endif
-#endif
-
 #define SELF_SENDER -1
 
 

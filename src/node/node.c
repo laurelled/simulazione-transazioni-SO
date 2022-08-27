@@ -1,6 +1,7 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
 #include "../ipc/ipc.h"
+#include "../constants/constants.h"
 
 #include <string.h>
 #include <sys/shm.h>
@@ -10,12 +11,6 @@
 #include <stdio.h>
 
 #define ALARM_PERIOD 1
-
-extern int SO_TP_SIZE;
-extern int SO_NUM_FRIENDS;
-extern int SO_MAX_TRANS_PROC_NSEC;
-extern int SO_MIN_TRANS_PROC_NSEC;
-extern int SO_HOPS;
 
 /* IPC */
 static int queue_id;
