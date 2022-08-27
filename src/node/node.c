@@ -3,21 +3,12 @@
 #include "../master/master.h"
 #include "../ipc_functions/ipc_functions.h"
 
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/sem.h>
-#include <sys/wait.h>
 #include <string.h>
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <sys/msg.h>
 #include <signal.h>
-#include <unistd.h>
 #include <stdio.h>
-#include <time.h>
-#include <stdlib.h>
-#include <errno.h>
 
 #define ALARM_PERIOD 1
 
@@ -35,11 +26,11 @@ static int* friends;
 static int nof_friends;
 
 static transaction* transaction_pool;
-volatile sig_atomic_t nof_transaction;
+static int nof_transaction;
 
-volatile sig_atomic_t alarm_flag;
-volatile sig_atomic_t sigusr1_flag;
-volatile sig_atomic_t sigusr2_flag;
+static volatile sig_atomic_t alarm_flag;
+static volatile sig_atomic_t sigusr1_flag;
+static volatile sig_atomic_t sigusr2_flag;
 
 
 static void cleanup() {
