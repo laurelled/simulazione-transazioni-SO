@@ -1,10 +1,11 @@
 #include "../constants/constants.h"
 #include "master_utils.h"
 #include <signal.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <errno.h>
 
-#define MAX_USERS_TO_PRINT 20
+#define MAX_USERS_TO_PRINT 50
 
 extern int SO_USERS_NUM;
 
@@ -98,42 +99,65 @@ void periodical_print(struct users_ds users, struct nodes_ds nodes) {
 
 void summary_print(int ending_reason, struct users_ds users, struct nodes_ds nodes, int book_size) {
   int i = 0;
+  FILE* output = stdout;
+  int opened = 0;
+
+  if (SO_USERS_NUM > MAX_USERS_TO_PRINT) {
+    char c;
+    int match;
+    printf("The number of users is very large (%d). Would you like to print the summary in a log file? (Type only 'y' or 'n') [Y\\n] ", SO_USERS_NUM);
+    if ((match = scanf("%c", &c)) > 0 && (tolower(c) == 'y' || c == '\n')) {
+      FILE* summary_log_fd = NULL;
+      printf("Printing summary in \"./summary.log...\n");
+      if ((summary_log_fd = fopen("./summary.log", "w+")) == NULL) {
+        printf("Encountered an error, printing in the terminal.\n\n\n");
+      }
+      else {
+        opened = 1;
+        output = summary_log_fd;
+      }
+    }
+  }
 
   switch (ending_reason)
   {
   case SIM_END_SEC:
-    printf("[!] Simulation ending reason: TIME LIMIT REACHED [!]\n\n");
+    fprintf(output, "[!] Simulation ending reason: TIME LIMIT REACHED [!]\n\n");
     break;
   case SIM_END_SIZ:
-    printf("[!] Simulation ending reason: MASTER BOOK SIZE EXCEEDED [!]\n\n");
+    fprintf(output, "[!] Simulation ending reason: MASTER BOOK SIZE EXCEEDED [!]\n\n");
     break;
   case SIM_END_USR:
-    printf("[!] Simulation ending reason: ALL USERS TERMINATED [!]\n\n");
+    fprintf(output, "[!] Simulation ending reason: ALL USERS TERMINATED [!]\n\n");
     break;
   default:
-    printf("[!] Simulation ending reason: UNEXPECTED ERRORS [!]\n\n");
+    fprintf(output, "[!] Simulation ending reason: UNEXPECTED ERRORS [!]\n\n");
     break;
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
-  /*printf("USERS BUDGETS\n");
+  fprintf(output, "USERS BUDGETS\n");
+  i = 0;
   while (i < SO_USERS_NUM) {
-    printf("USER u%d : %d$\n", users.array[i], users.budgets[i]);
+    fprintf(output, "USER u%d : %d$\n", users.array[i], users.budgets[i]);
     i++;
-  }*/
+  }
   /* bilancio di ogni processo nodo */
   i = 0;
-  printf("NODES (%d) BUDGETS\n", *(nodes.size_ptr));
+  fprintf(output, "NODES (%d) BUDGETS\n", *(nodes.size_ptr));
   while (i < *nodes.size_ptr) {
-    printf("NODE n%d : %d$\n", nodes.array[i], nodes.budgets[i]);
+    fprintf(output, "NODE n%d : %d$\n", nodes.array[i], nodes.budgets[i]);
     i++;
   }
-  printf("NUMBER OF INACTIVE USERS: %d\n", users.inactive_count);
-  printf("NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n\n\n", book_size);
+  fprintf(output, "NUMBER OF INACTIVE USERS: %d\n", users.inactive_count);
+  fprintf(output, "NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n\n\n", book_size);
 
-  printf("Number of transactions left per node:\n");
+  fprintf(output, "Number of transactions left per node:\n");
   i = 0;
   while (i < *nodes.size_ptr) {
-    printf("NODE %d: %d transactions left\n", nodes.array[i], nodes.transactions_left[i]);
+    fprintf(output, "NODE %d: %d transactions left\n", nodes.array[i], nodes.transactions_left[i]);
     i++;
   }
+
+  if (opened)
+    fclose(output);
 }

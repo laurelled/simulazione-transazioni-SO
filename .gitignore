@@ -11,3 +11,4 @@
 .vscode
 *.txt
 .env
+*.log
