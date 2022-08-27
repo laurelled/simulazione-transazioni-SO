@@ -113,14 +113,10 @@ void stop_simulation() {
 static void cleanup() {
   sigset_t mask;
   int i = 0;
+  int sblock[3] = { SIGUSR1, SIGUSR2, SIGINT };
   alarm(0);
+  sig_block(sblock, 3);
 
-  bzero(&mask, sizeof(sigset_t));
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGUSR1);
-  sigaddset(&mask, SIGUSR2);
-  sigaddset(&mask, SIGINT);
-  sigprocmask(SIG_BLOCK, &mask, NULL);
 
   if (users != NULL && nodes.array != NULL) {
     stop_simulation();
@@ -656,13 +652,10 @@ int main() {
 
     }
     alarm(0);
+
     {
-      sigset_t mask;
-      bzero(&mask, sizeof(sigset_t));
-      sigemptyset(&mask);
-      sigaddset(&mask, SIGUSR1);
-      sigaddset(&mask, SIGUSR2);
-      sigprocmask(SIG_BLOCK, &mask, NULL);
+      int sblock[2] = { SIGUSR1, SIGUSR2 };
+      sig_block(sblock, 2);
     }
     stop_simulation();
     fprintf(LOG_FILE, "Simulation ended at %ds\n", simulation_seconds);
