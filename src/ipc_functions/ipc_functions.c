@@ -40,3 +40,28 @@ int sem_wait_for_zero(int sem_id, int sem_num) {
 
   return semop(sem_id, &sops, 1);
 }
+
+sigset_t sig_block(int* signals, int nsig) {
+  sigset_t mask;
+  sigemptyset(&mask);
+
+  while (--nsig >= 0) {
+    int sig = signals[nsig];
+    sigaddset(&mask, sig);
+  }
+
+  sigprocmask(SIG_BLOCK, &mask, NULL);
+  return mask;
+}
+
+void sig_unblock(int* signals, int nsig) {
+  sigset_t mask;
+  sigemptyset(&mask);
+
+  while (--nsig >= 0) {
+    int sig = signals[nsig];
+    sigaddset(&mask, sig);
+  }
+
+  sigprocmask(SIG_UNBLOCK, &mask, NULL);
+}

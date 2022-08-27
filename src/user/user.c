@@ -41,9 +41,19 @@ volatile sig_atomic_t refused_flag;
 
 static void cleanup() {}
 
+static sigset_t reserve_bilancio_corrente() {
+  int sblock = SIGUSR2;
+  return sig_block(&sblock, 1);
+}
+
+static void release_bilancio_corrente() {
+  int sunblock = SIGUSR2;
+  sig_unblock(&sunblock, 1);
+}
+
 void usr_handler(int);
 int calcola_bilancio(int, struct master_book, int*);
-void generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book, int* block_reached);
+transaction generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book);
 
 void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
 {
@@ -104,10 +114,23 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
         fprintf(ERR_FILE, "u%d: no msg was found with my pid type\n", getpid());
       refused_t = incoming.mtext;
       total = refused_t.quantita + refused_t.reward;
-      bilancio_corrente += total;
-    }
 
-    generate_and_send_transaction(nodes, users, book, &block_reached);
+      /* protect update of bilancio_corrente from SIGUSR2 */
+      reserve_bilancio_corrente();
+      bilancio_corrente += total;
+      release_bilancio_corrente();
+    }
+    bilancio_corrente = calcola_bilancio(bilancio_corrente, book, &block_reached);
+    /* protect update of bilancio_corrente from SIGUSR2 */
+    reserve_bilancio_corrente();
+    if (bilancio_corrente >= 2) {
+      generate_and_send_transaction(nodes, users, book);
+    }
+    else {
+      ++cont_try;
+    }
+    release_bilancio_corrente();
+
     /*tempo di attesa dopo l'invio di una transazione*/
     sleep_random_from_range(SO_MIN_TRANS_GEN_NSEC, SO_MAX_TRANS_GEN_NSEC);
   }
@@ -122,7 +145,10 @@ int calcola_bilancio(int bilancio, struct master_book book, int* block_reached)
   while (i < size) {
     transaction t = book.blocks[i];
     if (t.receiver == getpid()) {
+      /* protect update of bilancio_corrente from SIGUSR2 */
+      reserve_bilancio_corrente();
       bilancio += t.quantita;
+      release_bilancio_corrente();
     }
     i++;
   }
@@ -138,8 +164,16 @@ void usr_handler(int signal) {
     break;
   case SIGUSR2:
     /*generazione di una transazione alla ricezione del segnale SIGUSR2*/
-    fprintf(LOG_FILE, "recieved SIGUSR2, generation of transaction in progress...\n");
-    generate_and_send_transaction(nodes, users, book, &block_reached);
+    fprintf(ERR_FILE, "u%d: recieved SIGUSR2, generation of transaction in progress...\n", getpid());
+    if (bilancio_corrente >= 2) {
+      char* str;
+      transaction sent = generate_and_send_transaction(nodes, users, book);
+      fprintf(ERR_FILE, "u%d: successfully generated transaction %s", getpid(), (str = print_transaction(sent)));
+      free(str);
+    }
+    else {
+      fprintf(ERR_FILE, "u%d: actual balance is < 2 (%d), cannot send transaction\n", getpid(), bilancio_corrente);
+    }
     break;
   case SIGTERM:
     /*segnale per la terminazione dell'esecuzione*/
@@ -155,63 +189,61 @@ void usr_handler(int signal) {
   }
 }
 
-void generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book, int* block_reached) {
-  bilancio_corrente = calcola_bilancio(bilancio_corrente, book, block_reached);
-  if (bilancio_corrente >= 2) {
-    int size = 0, queue_id, cifra_utente, random_user, random_node, total_quantity, reward;
-    transaction t;
-    struct msg message;
-    /* estrazione di un destinatario casuale*/
-    random_user = random_element(users, SO_USERS_NUM);
-    if (random_user == -1) {
-      fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
-      exit(EXIT_SUCCESS);
-    }
-    /* estrazione di un nodo casuale*/
-    size = *(nodes.size);
-    random_node = random_element(nodes.array, size);
-    if (random_node == -1) {
-      fprintf(ERR_FILE, "init_user u%d: all nodes have terminated, cannot send transaction.\n", getpid());
-      exit(EXIT_FAILURE);
-    }
+transaction generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book) {
+  int size = 0, queue_id, cifra_utente, random_user, random_node, total_quantity, reward;
+  transaction t;
+  struct msg message;
+  /* estrazione di un destinatario casuale*/
+  random_user = random_element(users, SO_USERS_NUM);
+  if (random_user == -1) {
+    fprintf(LOG_FILE, "init_user u%d:  all other users have terminated. Ending successfully.\n", getpid());
+    exit(EXIT_SUCCESS);
+  }
+  /* estrazione di un nodo casuale*/
+  size = *(nodes.size);
+  random_node = random_element(nodes.array, size);
+  if (random_node == -1) {
+    fprintf(ERR_FILE, "init_user u%d: all nodes have terminated, cannot send transaction.\n", getpid());
+    exit(EXIT_FAILURE);
+  }
 
-    /* generazione di un importo da inviare*/
-    srand(getpid() + clock());
-    total_quantity = (rand() % (bilancio_corrente - 2 + 1)) + 2;
-    reward = total_quantity * SO_REWARD / 100;
-    if (reward == 0)
-      reward = 1;
-    cifra_utente = total_quantity - reward;
+  /* generazione di un importo da inviare*/
+  srand(getpid() + clock());
+  total_quantity = (rand() % (bilancio_corrente - 2 + 1)) + 2;
+  reward = total_quantity * SO_REWARD / 100;
+  if (reward == 0)
+    reward = 1;
+  cifra_utente = total_quantity - reward;
 
 
-    /* creazione di una transazione e invio di tale al nodo generato*/
-    new_transaction(&t, getpid(), random_user, cifra_utente, reward);
-    /* system V message queue */
-    /* ricerca della coda di messaggi del nodo random */
-    if ((queue_id = msgget(random_node, 0)) == -1) {
-      fprintf(ERR_FILE, "init_user u%d: cannot retrieve message queue of node %d (%s)\n", getpid(), random_node, strerror(errno));
+  /* creazione di una transazione e invio di tale al nodo generato*/
+  new_transaction(&t, getpid(), random_user, cifra_utente, reward);
+  /* system V message queue */
+  /* ricerca della coda di messaggi del nodo random */
+  if ((queue_id = msgget(random_node, 0)) == -1) {
+    fprintf(ERR_FILE, "init_user u%d: cannot retrieve message queue of node %d (%s)\n", getpid(), random_node, strerror(errno));
+    CHILD_STOP_SIMULATION;
+    exit(EXIT_FAILURE);
+  }
+  message.mtype = 1;
+  message.mtext = t;
+  if (msgsnd(queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
+    if (errno != EAGAIN) {
+      fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction at queue with id %d of node %d: %s.\n", getpid(), queue_id, random_node, strerror(errno));
       CHILD_STOP_SIMULATION;
       exit(EXIT_FAILURE);
     }
-    message.mtype = 1;
-    message.mtext = t;
-    if (msgsnd(queue_id, &message, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-      if (errno != EAGAIN) {
-        fprintf(ERR_FILE, "init_user u%d: recieved an unexpected error while sending transaction at queue with id %d of node %d: %s.\n", getpid(), queue_id, random_node, strerror(errno));
-        CHILD_STOP_SIMULATION;
-        exit(EXIT_FAILURE);
-      }
-      else {
-        ++cont_try;
-      }
-    }
     else {
-      cont_try = 0;
-      bilancio_corrente -= total_quantity;
-      kill(random_node, SIGUSR1);
+      transaction failed;
+      bzero(&failed, sizeof(transaction));
+      ++cont_try;
+      return failed;
     }
   }
   else {
-    ++cont_try;
+    cont_try = 0;
+    bilancio_corrente -= total_quantity;
+    kill(random_node, SIGUSR1);
+    return t;
   }
 }
