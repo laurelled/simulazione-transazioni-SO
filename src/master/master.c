@@ -1,8 +1,7 @@
 #include "../utils/utils.h"
 #include "../load_constants/load_constants.h"
-#include "../ipc_functions/ipc_functions.h"
+#include "../ipc/ipc.h"
 #include "../master_book/master_book.h"
-#include "master_functions/master_functions.h"
 #include "../node/node.h"
 #include "../user/user.h"
 #include "master.h"
@@ -46,7 +45,7 @@ static int shm_nodes_array_id = -1;
 static int shm_nodes_size_id = -1;
 static int* nodes_write_fd;
 static int* node_budget;
-static struct nodes nodes;
+static struct nodes_list nodes;
 
 static int queue_id = -1;
 static int refused_queue_id = -1;
@@ -197,7 +196,7 @@ void periodical_print() {
   }
 }
 
-void summary_print(int ending_reason, int* users, int* user_budget, struct nodes nodes, int* node_budget, int* nof_transactions) {
+void summary_print(int ending_reason, int* users, int* user_budget, struct nodes_list nodes, int* node_budget, int* nof_transactions) {
   int i = 0;
 
   switch (ending_reason)
@@ -346,7 +345,7 @@ void handler(int signal) {
         TEST_ERROR_AND_FAIL;
 
         {
-          struct nodes nodes;
+          struct nodes_list nodes;
           nodes.array = shmat(shm_nodes_array_id, NULL, SHM_RDONLY);
           TEST_ERROR_AND_FAIL;
           nodes.size = shmat(shm_nodes_size_id, NULL, SHM_RDONLY);
@@ -377,9 +376,9 @@ void handler(int signal) {
         break;
       }
 
-      sem_release(sem_id, ID_READY_ALL);
+      sem_release(sem_id, ID_SEM_READY_ALL);
       TEST_ERROR_AND_FAIL;
-      sem_wait_for_zero(sem_id, ID_READY_ALL);
+      sem_wait_for_zero(sem_id, ID_SEM_READY_ALL);
       TEST_ERROR_AND_FAIL;
 
       {
@@ -448,9 +447,9 @@ int main() {
   sem_id = semget(getpid(), NUM_SEM, IPC_CREATION_FLAGS);
   TEST_ERROR_AND_FAIL;
 
-  semctl(sem_id, ID_MEM, SETVAL, 1);
+  semctl(sem_id, ID_SEM_MEM, SETVAL, 1);
   TEST_ERROR_AND_FAIL;
-  semctl(sem_id, ID_READY_ALL, SETVAL, SO_USERS_NUM + SO_NODES_NUM + 1);
+  semctl(sem_id, ID_SEM_READY_ALL, SETVAL, SO_USERS_NUM + SO_NODES_NUM + 1);
   TEST_ERROR_AND_FAIL;
   semctl(sem_id, ID_READY_NODE, SETVAL, SO_NODES_NUM + 1);
   TEST_ERROR_AND_FAIL;
@@ -579,7 +578,7 @@ int main() {
     {
       int* users = shmat(shm_users_array_id, NULL, SHM_RDONLY);
       TEST_ERROR_AND_FAIL;
-      wait_siblings(ID_READY_ALL);
+      wait_siblings(ID_SEM_READY_ALL);
       init_user(users, shm_nodes_array_id, shm_nodes_size_id, shm_book_id, shm_book_size_id);
       break;
     }
@@ -590,9 +589,9 @@ int main() {
     }
   }
 
-  sem_reserve(sem_id, ID_READY_ALL);
+  sem_reserve(sem_id, ID_SEM_READY_ALL);
   TEST_ERROR_AND_FAIL;
-  sem_wait_for_zero(sem_id, ID_READY_ALL);
+  sem_wait_for_zero(sem_id, ID_SEM_READY_ALL);
 
   {
     int ending_reason, block_reached = 0;

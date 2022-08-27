@@ -1,9 +1,10 @@
 #define _GNU_SOURCE
 #include "master_book.h"
 #include "../utils/utils.h"
+#include "../ipc/ipc.h"
+
 #include <time.h>
 #include <sys/ipc.h>
-#include <sys/shm.h>
 #include <sys/msg.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -34,21 +35,6 @@ void new_transaction(transaction* new, int sender, int reciever, int quantita, i
   new->receiver = reciever;
   new->quantita = quantita;
   new->reward = reward;
-}
-
-int refuse_transaction(transaction t, int user_q) {
-  struct msg incoming;
-  incoming.mtext = t;
-  incoming.mtype = t.sender;
-  if (msgsnd(user_q, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
-    return -1;
-  }
-  if (kill(t.sender, 0) == -1) {
-    return -1;
-  }
-  kill(t.sender, SIGUSR1);
-
-  return 0;
 }
 
 char* print_transaction(transaction t) {

@@ -23,13 +23,13 @@ conf3: master ${COMMON_DEPS}
 exe: master ${COMMON_DEPS}
 	${CC} build/*.o -o run.out
 
-master: src/master/master.c node user master_book utils ipc_functions load_constants ${COMMON_DEPS}
+master: src/master/master.c node user master_book utils ipc load_constants ${COMMON_DEPS}
 	${CC} ${CFLAGS} -c $< -o build/$@.o
 
-node: src/node/node.c utils master_book ipc_functions ${COMMON_DEPS}
+node: src/node/node.c utils master_book ipc ${COMMON_DEPS}
 	${CC} ${CFLAGS} -c $< -o build/$@.o
 
-ipc_functions: src/ipc_functions/ipc_functions.c ${COMMON_DEPS}
+ipc: src/ipc/ipc.c ${COMMON_DEPS}
 	${CC} ${CFLAGS} -c $< -o build/$@.o
 
 user: src/user/user.c ${COMMON_DEPS}

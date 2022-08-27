@@ -1,11 +1,17 @@
-#ifndef _IPC_FUNCS_H_
-#define _IPC_FUNCS_H_
+#ifndef _IPC_H_
+#define _IPC_H_
 
 #include "../utils/utils.h"
 #include <signal.h>
 
-#define ID_MEM 1
-#define ID_READY_ALL 0
+#define ID_SEM_MEM 1
+#define ID_SEM_READY_ALL 0
+#define REFUSE_Q_KEY getppid() - 1
+
+struct msg {
+  long mtype;
+  transaction mtext;
+};
 
 #define IPC_CREATION_FLAGS IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR
 

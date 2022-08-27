@@ -1,7 +1,6 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
-#include "../master/master.h"
-#include "../ipc_functions/ipc_functions.h"
+#include "../ipc/ipc.h"
 
 #include <string.h>
 #include <sys/shm.h>
@@ -134,8 +133,8 @@ static void generate() {
 void simulate_processing(struct master_book book, int sem_id) {
   sleep_random_from_range(SO_MIN_TRANS_PROC_NSEC, SO_MAX_TRANS_PROC_NSEC);
 
-  /* ID_MEM ottenuto tramite master.h */
-  sem_reserve(sem_id, ID_MEM);
+  /* ID_SEM_MEM ottenuto tramite master.h */
+  sem_reserve(sem_id, ID_SEM_MEM);
 
   {
     int i = 0, gain = 0, block_i, size = *(book.size);
@@ -165,7 +164,7 @@ void simulate_processing(struct master_book book, int sem_id) {
     }
   }
 
-  sem_release(sem_id, ID_MEM);
+  sem_release(sem_id, ID_SEM_MEM);
 }
 
 void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_size_id)
@@ -190,10 +189,10 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
   book.size = shmat(shm_book_size_id, NULL, 0);
   TEST_ERROR_AND_FAIL;
 
-  /* ID_READY_ALL ottenuto da master.h */
-  sem_reserve(sem_id, ID_READY_ALL);
+  /* ID_SEM_READY_ALL ottenuto da master.h */
+  sem_reserve(sem_id, ID_SEM_READY_ALL);
   TEST_ERROR_AND_FAIL;
-  sem_wait_for_zero(sem_id, ID_READY_ALL);
+  sem_wait_for_zero(sem_id, ID_SEM_READY_ALL);
 
   alarm(ALARM_PERIOD);
   while (kill(ppid, 0) != -1 && errno != ESRCH)
@@ -234,7 +233,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
 
           /* master queue was full, refusing user transaction */
           if (errno == EAGAIN) {
-            int user_q = msgget(MSG_Q, 0);
+            int user_q = msgget(REFUSE_Q_KEY, 0);
             TEST_ERROR_AND_FAIL;
 
             refuse_transaction(incoming_t, user_q);
@@ -266,7 +265,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
               exit(EXIT_FAILURE);
             }
             else {
-              int user_q = msgget(MSG_Q, 0);
+              int user_q = msgget(REFUSE_Q_KEY, 0);
               TEST_ERROR_AND_FAIL;
 
               refuse_transaction(incoming_t, user_q);

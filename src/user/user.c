@@ -1,8 +1,7 @@
 #include "../utils/utils.h"
 #include "../master_book/master_book.h"
-#include "user.h"
-#include "../ipc_functions/ipc_functions.h"
-#include "../master/master.h"
+#include "../node/node.h"
+#include "../ipc/ipc.h"
 
 #include <sys/shm.h>
 #include <string.h>
@@ -21,7 +20,7 @@ static int block_reached;
 static int bilancio_corrente;
 static int cont_try;
 
-static struct nodes nodes;
+static struct nodes_list nodes;
 static struct master_book book;
 static int* users;
 
@@ -41,7 +40,7 @@ static void release_bilancio_corrente() {
 
 void usr_handler(int);
 int calcola_bilancio(int, struct master_book, int*);
-transaction generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book);
+transaction generate_and_send_transaction(struct nodes_list nodes, int* users, struct master_book book);
 
 void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_book_id, int shm_book_size_id)
 {
@@ -91,7 +90,7 @@ void init_user(int* users_a, int shm_nodes_array, int shm_nodes_size, int shm_bo
       errno = 0;
 
       refused_flag = 0;
-      transaction_q = msgget(MSG_Q, 0);
+      transaction_q = msgget(REFUSE_Q_KEY, 0);
       TEST_ERROR_AND_FAIL;
 
       msgrcv(transaction_q, &incoming, sizeof(struct msg) - sizeof(long), getpid(), IPC_NOWAIT);
@@ -177,7 +176,7 @@ void usr_handler(int signal) {
   }
 }
 
-transaction generate_and_send_transaction(struct nodes nodes, int* users, struct master_book book) {
+transaction generate_and_send_transaction(struct nodes_list nodes, int* users, struct master_book book) {
   int size = 0, queue_id, cifra_utente, random_user, random_node, total_quantity, reward;
   transaction t;
   struct msg message;
