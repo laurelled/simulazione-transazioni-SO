@@ -13,7 +13,8 @@
 #define SO_BLOCK_SIZE 10
 #define SO_REGISTRY_SIZE 1000
 #else
-#define SO_BLOCK_SIZE 10
+/* Compile time custom configuration */
+#define SO_BLOCK_SIZE -1
 #define SO_REGISTRY_SIZE 1000
 #endif
 #endif

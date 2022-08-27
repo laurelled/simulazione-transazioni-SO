@@ -262,8 +262,16 @@ static void sig_handler(int signal) {
 int main() {
   int i = 0;
 
-  load_constants();
+#if SO_BLOCK_SIZE < 0
+  fprintf(stderr, "SO_BLOCK_SIZE should be a positive integer. Please fix the variable in constants/constants.h before running again\n");
+  exit(EXIT_FAILURE);
+#endif
+#if SO_REGISTRY_SIZE < 0
+  fprintf(stderr, "SO_REGISTRY_SIZE should be a positive integer. Please fix this variable before running again\n");
+  exit(EXIT_FAILURE);
+#endif
 
+  load_constants();
   nodes.write_pipes = init_list(MAX_NODES);
   TEST_ERROR_AND_FAIL;
   nodes.budgets = init_list(MAX_NODES);
