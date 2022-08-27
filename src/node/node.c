@@ -63,12 +63,12 @@ static void sig_handler(int sig) {
     alarm(ALARM_PERIOD);
     break;
   case SIGSEGV:
-    fprintf(ERR_FILE, "n%d: recieved a SIGSEGV, stopping simulation.\n", getpid());
+    fprintf(stderr, "n%d: recieved a SIGSEGV, stopping simulation.\n", getpid());
     cleanup();
     exit(EXIT_FAILURE);
     break;
   default:
-    fprintf(LOG_FILE, "node %d: different signal received\n", getpid());
+    printf("node %d: different signal received\n", getpid());
   }
 
 }
@@ -84,7 +84,7 @@ static void generate() {
 
 
   if (SO_BLOCK_SIZE >= SO_TP_SIZE) {
-    fprintf(LOG_FILE, "init_node: SO_BLOCK_SIZE >= SO_TP_SIZE. Check environmental config.\n");
+    printf("init_node: SO_BLOCK_SIZE >= SO_TP_SIZE. Check environmental config.\n");
     cleanup();
     CHILD_STOP_SIMULATION;
     exit(EXIT_FAILURE);
@@ -251,7 +251,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
           int chosen_friend, friend_queue = 0;
           chosen_friend = random_element(friends, nof_friends);
           if (chosen_friend == -1) {
-            fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
+            printf("%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
             cleanup();
             exit(EXIT_FAILURE);
           }
@@ -261,7 +261,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
           incoming.mtype += 1;
           if (msgsnd(friend_queue, &incoming, sizeof(struct msg) - sizeof(long), IPC_NOWAIT) == -1) {
             if (errno != EAGAIN) {
-              fprintf(ERR_FILE, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
+              fprintf(stderr, "node n%d: recieved an unexpected error while sending transaction to a friend: %s.\n", getpid(), strerror(errno));
               cleanup();
               exit(EXIT_FAILURE);
             }
@@ -296,7 +296,7 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
         outcoming.mtext = transaction_pool[nof_transaction - 1];
         chosen_friend = random_element(friends, nof_friends);
         if (chosen_friend == -1) {
-          fprintf(LOG_FILE, "%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
+          printf("%s:%d: n%d: cannot choose a random friend\n", __FILE__, __LINE__, getpid());
           cleanup();
           exit(EXIT_FAILURE);
         }
@@ -331,6 +331,6 @@ void init_node(int* friends_list, int pipe_read, int shm_book_id, int shm_book_s
     }
     simulate_processing(book, sem_id);
   }
-  fprintf(ERR_FILE, "n%d: master (%d) terminated. Ending...\n", getpid(), ppid);
+  fprintf(stderr, "n%d: master (%d) terminated. Ending...\n", getpid(), ppid);
   exit(EXIT_FAILURE);
 }

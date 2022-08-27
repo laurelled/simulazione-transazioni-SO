@@ -7,22 +7,12 @@
 #include "../user/user.h"
 #include "master.h"
 
-#include <sys/time.h>
-#include <sys/types.h>
 #include <sys/ipc.h>
-#include <sys/msg.h>
 #include <sys/sem.h>
-#include <sys/wait.h>
-#include <string.h>
 #include <sys/shm.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/msg.h>
-#include <signal.h>
-#include <time.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
 
 #define SIM_END_SEC 0
 #define SIM_END_USR 1
@@ -168,18 +158,18 @@ static void cleanup() {
 
 void periodical_print() {
   int i = 0;
-  fprintf(LOG_FILE, "NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d\n", (SO_USERS_NUM - inactive_users), *(nodes.size));
+  printf("NUMBER OF ACTIVE USERS %d | NUMBER OF ACTIVE NODES %d\n", (SO_USERS_NUM - inactive_users), *(nodes.size));
   /* budget di ogni processo utente (inclusi quelli terminati prematuramente)*/
-  fprintf(LOG_FILE, "USERS BUDGETS\n");
+  printf("USERS BUDGETS\n");
   if (SO_USERS_NUM < MAX_USERS_TO_PRINT) {
     while (i < SO_USERS_NUM) {
-      fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
+      printf("USER u%d : %d$\n", users[i], user_budget[i]);
       i++;
     }
   }
   else {
     int min_i = 0, max_i = 0;
-    fprintf(LOG_FILE, "[!] Users count is too high to display all budgets [!]\n");
+    printf("[!] Users count is too high to display all budgets [!]\n");
     i = 1;
     while (i < SO_NODES_NUM) {
       if (user_budget[i] < user_budget[min_i]) {
@@ -191,17 +181,17 @@ void periodical_print() {
       i++;
     }
 
-    fprintf(LOG_FILE, "HIGHEST BUDGET: USER u%d : %d$\n", users[max_i], user_budget[max_i]);
-    fprintf(LOG_FILE, "LOWEST BUDGET: USER u%d : %d$\n", users[min_i], user_budget[min_i]);
+    printf("HIGHEST BUDGET: USER u%d : %d$\n", users[max_i], user_budget[max_i]);
+    printf("LOWEST BUDGET: USER u%d : %d$\n", users[min_i], user_budget[min_i]);
   }
 
   {
     int size = *(nodes.size);
     int i = 0;
     /* budget di ogni processo nodo */
-    fprintf(LOG_FILE, "NODES (%d) BUDGETS\n", *(nodes.size));
+    printf("NODES (%d) BUDGETS\n", *(nodes.size));
     while (i < size) {
-      fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
+      printf("NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
       i++;
     }
   }
@@ -213,38 +203,38 @@ void summary_print(int ending_reason, int* users, int* user_budget, struct nodes
   switch (ending_reason)
   {
   case SIM_END_SEC:
-    fprintf(LOG_FILE, "[!] Simulation ending reason: TIME LIMIT REACHED [!]\n\n");
+    printf("[!] Simulation ending reason: TIME LIMIT REACHED [!]\n\n");
     break;
   case SIM_END_SIZ:
-    fprintf(LOG_FILE, "[!] Simulation ending reason: MASTER BOOK SIZE EXCEEDED [!]\n\n");
+    printf("[!] Simulation ending reason: MASTER BOOK SIZE EXCEEDED [!]\n\n");
     break;
   case SIM_END_USR:
-    fprintf(LOG_FILE, "[!] Simulation ending reason: ALL USERS TERMINATED [!]\n\n");
+    printf("[!] Simulation ending reason: ALL USERS TERMINATED [!]\n\n");
     break;
   default:
-    fprintf(LOG_FILE, "[!] Simulation ending reason: UNEXPECTED ERRORS [!]\n\n");
+    printf("[!] Simulation ending reason: UNEXPECTED ERRORS [!]\n\n");
     break;
   }
   /* bilancio di ogni processo utente, compresi quelli che sono terminati prematuramente */
-  /*fprintf(LOG_FILE, "USERS BUDGETS\n");
+  /*printf("USERS BUDGETS\n");
   while (i < SO_USERS_NUM) {
-    fprintf(LOG_FILE, "USER u%d : %d$\n", users[i], user_budget[i]);
+    printf("USER u%d : %d$\n", users[i], user_budget[i]);
     i++;
   }*/
   /* bilancio di ogni processo nodo */
   i = 0;
-  fprintf(LOG_FILE, "NODES (%d) BUDGETS\n", *(nodes.size));
+  printf("NODES (%d) BUDGETS\n", *(nodes.size));
   while (i < *nodes.size) {
-    fprintf(LOG_FILE, "NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
+    printf("NODE n%d : %d$\n", nodes.array[i], node_budget[i]);
     i++;
   }
-  fprintf(LOG_FILE, "NUMBER OF INACTIVE USERS: %d\n", inactive_users);
-  fprintf(LOG_FILE, "NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n\n\n", *book.size);
+  printf("NUMBER OF INACTIVE USERS: %d\n", inactive_users);
+  printf("NUMBER OF TRANSACTION BLOCK WRITTEN INTO THE MASTER BOOK: %d\n\n\n", *book.size);
 
-  fprintf(LOG_FILE, "Number of transactions left per node:\n");
+  printf("Number of transactions left per node:\n");
   i = 0;
   while (i < *nodes.size) {
-    fprintf(LOG_FILE, "NODE %d: %d transactions left\n", nodes.array[i], nof_transactions[i]);
+    printf("NODE %d: %d transactions left\n", nodes.array[i], nof_transactions[i]);
     i++;
   }
 }
@@ -262,7 +252,7 @@ int* assign_friends(int* array, int size) {
   while (i < SO_NUM_FRIENDS) {
     int random_el = random_element(array, size);
     if (random_el == -1) {
-      fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of friends\n", __FILE__, __LINE__);
+      fprintf(stderr, "%s:%d: something went wrong with the extraction of friends\n", __FILE__, __LINE__);
       free(friends);
       return NULL;
     }
@@ -288,7 +278,7 @@ void handler(int signal) {
     exit(EXIT_FAILURE);
     break;
   case SIGUSR2:
-    fprintf(ERR_FILE, "[%ld] master: sono stato notificato da un nodo che la size è stata superata\n", clock() / CLOCKS_PER_SEC);
+    fprintf(stderr, "[%d] master: sono stato notificato da un nodo che la size è stata superata\n", simulation_seconds);
     break;
   case SIGUSR1:
   {
@@ -335,7 +325,7 @@ void handler(int signal) {
               TEST_ERROR_AND_FAIL;
             }
             else {
-              fprintf(ERR_FILE, "master: refused transaction queue was full. Check ipcs usage.\n");
+              fprintf(stderr, "master: refused transaction queue was full. Check ipcs usage.\n");
             }
           }
         }
@@ -364,7 +354,7 @@ void handler(int signal) {
 
           friends = assign_friends(nodes.array, *(nodes.size));
           if (friends == NULL) {
-            fprintf(ERR_FILE, "n%d: something went wrong while trying to create friends list\n" __FILE__, __LINE__);
+            fprintf(stderr, "n%d: something went wrong while trying to create friends list\n" __FILE__, __LINE__);
             CHILD_STOP_SIMULATION;
             exit(EXIT_FAILURE);
           }
@@ -403,7 +393,7 @@ void handler(int signal) {
         while (i < SO_NUM_FRIENDS) {
           int node_random = random_element(nodes.array, *(nodes.size));
           if (node_random == -1) {
-            fprintf(ERR_FILE, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
+            fprintf(stderr, "%s:%d: something went wrong with the extraction of the node\n", __FILE__, __LINE__);
             cleanup();
             exit(EXIT_FAILURE);
           }
@@ -452,7 +442,7 @@ int main() {
     user_budget[i] = SO_BUDGET_INIT;
     i++;
   }
-  fprintf(LOG_FILE, "[!] MASTER PID: %d\n", getpid());
+  printf("[!] MASTER PID: %d\n", getpid());
 
   /* Inizializzazione semafori start sincronizzato e write del libro mastro */
   sem_id = semget(getpid(), NUM_SEM, IPC_CREATION_FLAGS);
@@ -552,7 +542,7 @@ int main() {
         TEST_ERROR_AND_FAIL;
         wait_siblings(ID_READY_NODE);
         if ((friends = assign_friends(nodes_arr, SO_NODES_NUM)) == NULL) {
-          fprintf(ERR_FILE, "%s:%d: n%d: something went wrong with the creation of the friends list\n", __FILE__, __LINE__, getpid());
+          fprintf(stderr, "%s:%d: n%d: something went wrong with the creation of the friends list\n", __FILE__, __LINE__, getpid());
           CHILD_STOP_SIMULATION;
           exit(EXIT_FAILURE);
         }
@@ -582,7 +572,7 @@ int main() {
 
     switch ((child = fork())) {
     case -1:
-      fprintf(ERR_FILE, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
+      fprintf(stderr, "master: fork failed for user creation iteration %d/%d.\n", i + 1, SO_USERS_NUM);
       cleanup();
       exit(EXIT_FAILURE);
     case 0:
@@ -631,7 +621,7 @@ int main() {
       }
       if (WIFEXITED(status)) {
         if (WEXITSTATUS(status) == EXIT_FAILURE) {
-          fprintf(ERR_FILE, "Child %d encountered an error. Stopping simulation\n", terminated_p);
+          fprintf(stderr, "Child %d encountered an error. Stopping simulation\n", terminated_p);
           free(nof_transactions);
           cleanup();
           exit(EXIT_FAILURE);
@@ -640,7 +630,7 @@ int main() {
           int size = *(nodes.size);
           int node_index = 0;
           if ((node_index = find_element(nodes.array, size, terminated_p)) != -1) {
-            fprintf(ERR_FILE, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
+            fprintf(stderr, "master: node %d terminated with the unexpected status %d while sim was ongoing. Check the code.\n", terminated_p, WEXITSTATUS(status));
             cleanup();
             exit(EXIT_FAILURE);
           }
@@ -657,7 +647,7 @@ int main() {
       sig_block(sblock, 2);
     }
     stop_simulation();
-    fprintf(LOG_FILE, "\n\nSIMULATION ENDED IN %dS\n", simulation_seconds);
+    printf("\n\nSIMULATION ENDED IN %dS\n", simulation_seconds);
 
     /* wait all of the terminated child */
     {
@@ -696,6 +686,6 @@ int main() {
   nodes.array = NULL;
   cleanup();
 
-  fprintf(LOG_FILE, "Completed simulation. Exiting...\n");
+  printf("Completed simulation. Exiting...\n");
   exit(EXIT_SUCCESS);
 }

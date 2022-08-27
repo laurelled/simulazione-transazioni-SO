@@ -8,7 +8,7 @@
 
 #define CHILD_STOP_SIMULATION kill(getppid(), SIGINT);
 
-#define TEST_ERROR    if (errno) {fprintf(ERR_FILE, \
+#define TEST_ERROR    if (errno) {fprintf(stderr, \
                        "%s:%d: PID=%5d: Error %d (%s)\n",\
                        __FILE__,\
                        __LINE__,\
@@ -16,7 +16,7 @@
                        errno,\
                        strerror(errno));}
 
-#define TEST_ERROR_AND_FAIL    if (errno && errno != ESRCH && errno != EAGAIN) {fprintf(ERR_FILE, \
+#define TEST_ERROR_AND_FAIL    if (errno && errno != ESRCH && errno != EAGAIN) {fprintf(stderr, \
                        "%s:%d: PID=%5d: Error %d (%s)\n",\
                        __FILE__,\
                        __LINE__,\
@@ -27,7 +27,6 @@
                        exit(EXIT_FAILURE); }
 
 #define LOG_FILE stdout
-#define ERR_FILE stderr
 
 void sleep_random_from_range(int min, int max);
 int* init_list(int size);

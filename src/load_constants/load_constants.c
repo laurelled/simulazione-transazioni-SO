@@ -36,7 +36,7 @@ int retrieve_constant(const char* name)
       val = atoi(token);
   }
   else {
-    fprintf(ERR_FILE, "%s could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n", name);
+    fprintf(stderr, "%s could not be found in the environ. Check your .env file or make sure to run 'export $(xargs  < <conf file>)'.\n", name);
     exit(EXIT_FAILURE);
   }
 
