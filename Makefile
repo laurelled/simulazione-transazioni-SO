@@ -1,48 +1,55 @@
 CC = gcc
 
-all: exe
-
 CFLAGS = -g -std=c89 -pedantic
 
-INCLUDES = src/**/*.h
+HEADERS = src/**/*.h
+COMMON_DEPS = ${HEADERS} Makefile
 
-COMMON_DEPS = $(INCLUDES) Makefile
+run.out: build/*.o ${COMMON_DEPS}
+	${CC} build/*.o -o $@
 
 conf1: CFLAGS += -DCONF1
-conf1: master ${COMMON_DEPS}
+conf1: build/master.o build/node.o ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c src/node/node.c -o build/node.o
+	${CC} ${CFLAGS} -c src/master.c -o build/master.o
 	${CC} build/*.o -o run.out
-
 conf2: CFLAGS += -DCONF2
-conf2: master ${COMMON_DEPS}
-	${CC} -DCONF2 build/*.o -o run.out
+conf2: build/master.o build/node.o ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c src/node/node.c -o build/node.o
+	${CC} ${CFLAGS} -c src/master.c -o build/master.o
+	${CC} build/*.o -o run.out
 
 conf3: CFLAGS += -DCONF3
-conf3: master ${COMMON_DEPS}
+conf3: build/master.o build/node.o ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c src/node/node.c -o build/node.o
+	${CC} ${CFLAGS} -c src/master.c -o build/master.o
 	${CC} build/*.o -o run.out
 
-exe: master ${COMMON_DEPS}
-	${CC} build/*.o -o run.out
+build/master.o: src/master.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-master: src/master/master.c node user master_book utils ipc load_constants ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/master_utils.o: src/master_utils/master_utils.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-node: src/node/node.c utils master_book ipc ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/node.o: src/node/node.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-ipc: src/ipc/ipc.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/ipc.o: src/ipc/ipc.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-user: src/user/user.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/user.o: src/user/user.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-load_constants: src/load_constants/load_constants.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/load_constants.o: src/load_constants/load_constants.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-master_book: src/master_book/master_book.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/master_book.o: src/master_book/master_book.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
-utils: src/utils/utils.c ${COMMON_DEPS}
-	${CC} ${CFLAGS} -c $< -o build/$@.o
+build/utils.o: src/utils/utils.c ${COMMON_DEPS}
+	${CC} ${CFLAGS} -c $< -o $@
 
 clean:
-	rm -f build/* bin/*
+	rm -f build/*
+
+all: run.out
